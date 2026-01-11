@@ -117,8 +117,9 @@ class GmxToolApp:
 
         ttk.Separator(bot_frame, orient="vertical").pack(side="left", fill="y", padx=10)
         
-        ttk.Button(bot_frame, text="Xuất Thành Công", command=lambda: self.export_data(only_success=True)).pack(side="right", padx=5)
-        ttk.Button(bot_frame, text="Xuất Tất Cả", command=lambda: self.export_data(only_success=False)).pack(side="right", padx=5)
+        ttk.Button(bot_frame, text="Xuất Thất Bại", command=lambda: self.export_data(filter_mode="FAIL")).pack(side="right", padx=5)
+        ttk.Button(bot_frame, text="Xuất Thành Công", command=lambda: self.export_data(filter_mode="SUCCESS")).pack(side="right", padx=5)
+        ttk.Button(bot_frame, text="Xuất Tất Cả", command=lambda: self.export_data(filter_mode="ALL")).pack(side="right", padx=5)
 
         # Labels Stats
         self.lbl_progress = ttk.Label(bot_frame, text="Progress: 0/0")
@@ -393,7 +394,8 @@ class GmxToolApp:
         self.status_var.set("Hoàn tất!")
         messagebox.showinfo("Done", "Đã hoàn thành công việc.")
 
-    def export_data(self, only_success=False):
+    def export_data(self, filter_mode="ALL"):
+        # filter_mode: "ALL", "SUCCESS", "FAIL"
         filename = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text Files", "*.txt")])
         if not filename: return
         
@@ -403,17 +405,29 @@ class GmxToolApp:
                 header = "\t".join(COLS)
                 f.write(header + "\n")
                 
+                count = 0
                 for item_id in self.tree.get_children():
                     vals = self.tree.item(item_id, "values")
                     status = vals[-1]
                     
-                    if only_success and "SUCCESS" not in status:
-                        continue
+                    is_success = "SUCCESS" in status
+                    is_running_pending = "Pending" in status or "Running" in status
+                    
+                    # Logic Filter
+                    if filter_mode == "SUCCESS":
+                        if not is_success: continue
+                    
+                    elif filter_mode == "FAIL":
+                        # Fail là những cái ĐÃ CHẠY xong nhưng KHÔNG Success
+                        if is_success or is_running_pending: continue
+                        
+                    # filter_mode == "ALL" -> Take all
                         
                     line = "\t".join(vals)
                     f.write(line + "\n")
+                    count += 1
             
-            messagebox.showinfo("Export", "Đã xuất file thành công!")
+            messagebox.showinfo("Export", f"Đã xuất {count} dòng ({filter_mode})!")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
