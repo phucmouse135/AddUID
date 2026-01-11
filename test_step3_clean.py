@@ -3,68 +3,83 @@ import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from gmx_core import get_driver, find_element_safe
-from test_step1_login import USER, PASS 
+from step1_login import login_process
+from test_step2_nav import step_2_navigate
 
-def test_cleanup():
-    driver = get_driver()
+USER = "saucycut1@gmx.de"
+PASS = "muledok5P"
+
+def step_3_cleanup(driver, original_email):
+    print("\n--- START TEST STEP 3: CLEANUP EMAILS ---")
     action = ActionChains(driver)
     
-    # --- LOGIN & NAVIGATE NHANH ---
-    driver.get("https://www.gmx.net/")
-    time.sleep(2); driver.get("https://www.gmx.net/")
-    find_element_safe(driver, By.ID, "onetrust-accept-btn-handler", timeout=3, click=True)
-    find_element_safe(driver, By.NAME, "username", send_keys=USER)
-    find_element_safe(driver, By.XPATH, "//*[@id='login']//button", click=True)
-    find_element_safe(driver, By.XPATH, "//*[@id='password']", send_keys=PASS)
-    find_element_safe(driver, By.XPATH, "//*[@id='login']//button", click=True)
-    time.sleep(5)
-    driver.get(driver.current_url.replace("mail?", "mail_settings?"))
-    find_element_safe(driver, By.PARTIAL_LINK_TEXT, "E-Mail-Adressen", click=True)
-    find_element_safe(driver, By.CLASS_NAME, "table_body")
-    # ------------------------------
-
-    print("--- START TEST STEP 3: CLEANUP ---")
     try:
-        # Vòng lặp xóa an toàn
+        # Vòng lặp "Quét -> Xóa -> Quét lại" để tránh lỗi DOM
         while True:
             time.sleep(2) # Chờ bảng ổn định
+            
+            # Tìm tất cả các dòng trong bảng
+            # Selector: .table_body .table_body-row
             rows = driver.find_elements(By.CSS_SELECTOR, ".table_body .table_body-row")
+            
+            print(f"-> Đang quét {len(rows)} dòng...")
             found_trash = False
             
-            print(f"Đang quét {len(rows)} dòng...")
-
             for row in rows:
                 try:
-                    txt = row.text
-                    if USER in txt:
-                        print(f"-> Giữ lại: {USER}")
+                    # Lấy text trong dòng. Cấu trúc bạn đưa: .table_field strong
+                    # <div class="table_field ..."> <strong> saucycut1@gmx.de </strong> ... </div>
+                    try:
+                        email_text = row.find_element(By.CSS_SELECTOR, ".table_field strong").text.strip()
+                    except:
+                        email_text = row.text.strip() # Fallback lấy full text row
+                    
+                    if original_email in email_text:
+                        # Đây là mail gốc -> Bỏ qua
                         continue
                     
-                    print(f"-> Phát hiện rác: {txt.splitlines()[0]}")
+                    # Nếu chạy xuống đây nghĩa là Mail Rác
+                    print(f"-> Phát hiện rác: {email_text}")
                     found_trash = True
                     
-                    # Hover chuột vào dòng
+                    # 1. HOVER CHUỘT (Bắt buộc để hiện nút xóa)
                     action.move_to_element(row).perform()
                     time.sleep(0.5)
                     
-                    # Tìm nút xóa trong dòng đó
+                    # 2. CLICK NÚT XÓA
+                    # Selector nút xóa bạn đưa: a[title='E-Mail-Adresse löschen']
+                    # Ta tìm nút này *bên trong* dòng row hiện tại
                     trash_btn = row.find_element(By.CSS_SELECTOR, "a[title='E-Mail-Adresse löschen']")
                     trash_btn.click()
-                    print("   Đã click xóa.")
+                    print("   Đã click nút xóa.")
                     
-                    # GMX có thể hiện popup confirm hoặc tự reload.
-                    # Nếu tự reload -> break loop để find_elements lại từ đầu
+                    # 3. XỬ LÝ POPUP XÁC NHẬN (MỚI)
+                    # Chờ và click nút OK
+                    print("   Đang chờ Popup xác nhận...")
+                    # Selector: button data-webdriver="primary" HOẶC nút chứa chữ "OK"
+                    if find_element_safe(driver, By.CSS_SELECTOR, "button[data-webdriver='primary']", timeout=5, click=True):
+                        print("   -> Đã Confirm OK.")
+                    elif find_element_safe(driver, By.XPATH, "//button[contains(text(), 'OK')]", timeout=3, click=True):
+                        print("   -> Đã Confirm OK (backup).")
+                    else:
+                        print("   ⚠️ Không thấy Popup confirm (Có thể đã tự tắt?).")
+
+                    # Sau khi xóa, bảng sẽ reload. Break vòng lặp for để scan lại từ đầu
                     break 
+                    
                 except Exception as e:
-                    print(f"   Lỗi thao tác dòng: {e}")
-                    continue
+                    print(f"   Lỗi thao tác dòng (có thể do DOM đổi): {e}")
+                    continue # Thử dòng tiếp theo
 
             if not found_trash:
-                print("✅ [PASS] Đã sạch mail rác.")
+                print("✅ [PASS] STEP 3: Đã sạch mail rác. Chỉ còn mail gốc.")
                 break
 
     except Exception as e:
-        print(f"❌ [FAIL] Lỗi: {e}")
+        print(f"❌ [FAIL] Lỗi Step 3: {e}")
 
 if __name__ == "__main__":
-    test_cleanup()
+    driver = get_driver()
+    if login_process(driver, USER, PASS):
+        if step_2_navigate(driver):
+            step_3_cleanup(driver, USER)
