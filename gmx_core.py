@@ -8,9 +8,11 @@ from selenium.webdriver.common.action_chains import ActionChains
 TIMEOUT_MAX = 15  # Số giây tối đa chờ 1 element
 SLEEP_INTERVAL = 1 # Thời gian nghỉ giữa các lần check
 
-def get_driver():
+def get_driver(headless=False):
     """Khởi tạo trình duyệt với cấu hình tối ưu"""
     options = uc.ChromeOptions()
+    if headless:
+        options.add_argument('--headless')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-blink-features=AutomationControlled')
     # Tắt load ảnh để chạy nhanh
