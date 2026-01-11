@@ -3,71 +3,92 @@ import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from gmx_core import get_driver, find_element_safe
-from test_step1_login import USER, PASS 
+from step1_login import login_process
+from test_step2_nav import step_2_navigate
 
-# DATA MẪU
-NEW_UID = "jhhhuu"
-NEW_DOMAIN = "@gmx.de"
+# DATA TEST
+USER = "saucycut1@gmx.de"
+PASS = "muledok5P"
+NEW_UID = "nubily"
+NEW_DOMAIN = "@gmx.de" # Hoặc gmx.net tùy data
 
-def test_add_alias():
-    driver = get_driver()
-    
-    # --- LOGIN & NAVIGATE NHANH ---
-    driver.get("https://www.gmx.net/")
-    time.sleep(2); driver.get("https://www.gmx.net/")
-    find_element_safe(driver, By.ID, "onetrust-accept-btn-handler", timeout=3, click=True)
-    find_element_safe(driver, By.NAME, "username", send_keys=USER)
-    find_element_safe(driver, By.XPATH, "//*[@id='login']//button", click=True)
-    find_element_safe(driver, By.XPATH, "//*[@id='password']", send_keys=PASS)
-    find_element_safe(driver, By.XPATH, "//*[@id='login']//button", click=True)
-    time.sleep(5)
-    driver.get(driver.current_url.replace("mail?", "mail_settings?"))
-    find_element_safe(driver, By.PARTIAL_LINK_TEXT, "E-Mail-Adressen", click=True)
-    # ------------------------------
-
-    print("--- START TEST STEP 4: ADD ALIAS ---")
+def step_4_add_alias(driver, uid, domain_full):
+    print("\n--- START TEST STEP 4: ADD NEW ALIAS ---")
     try:
-        # 1. Nhập UID
-        if find_element_safe(driver, By.CSS_SELECTOR, "input[data-webdriver='localPart']", send_keys=NEW_UID):
-            print(f"Đã nhập UID: {NEW_UID}")
-        else:
+        # 1. NHẬP UID
+        # Element bạn đưa: <input ... data-webdriver="localPart" ...>
+        print(f"-> Nhập UID: {uid}")
+        
+        # Selector: input[data-webdriver='localPart']
+        if not find_element_safe(driver, By.CSS_SELECTOR, "input[data-webdriver='localPart']", send_keys=uid):
             raise Exception("Không tìm thấy ô nhập UID")
 
-        # 2. Chọn Domain
-        select_el = find_element_safe(driver, By.CSS_SELECTOR, "fieldset select")
-        if select_el:
-            select = Select(select_el)
-            # Logic chọn đúng đuôi
+        # 2. CHỌN ĐUÔI MAIL
+        # Dropdown nằm cạnh input. Xpath bạn đưa: .../span[1]/select
+        # Ta tìm thẻ <select> nằm trong cùng <fieldset> với input cho chắc
+        print(f"-> Chọn Domain: {domain_full}")
+        
+        # Tìm thẻ select
+        select_element = find_element_safe(driver, By.CSS_SELECTOR, "fieldset select")
+        
+        if select_element:
+            select = Select(select_element)
+            # Logic chọn: Duyệt qua options xem cái nào chứa text đuôi mail
             found = False
+            domain_part = domain_full.replace("@", "") # Bỏ @ để so sánh lỏng
+            
             for opt in select.options:
-                if NEW_DOMAIN in opt.text:
+                # So sánh: ví dụ "gmx.de" nằm trong "@gmx.de"
+                if domain_part in opt.text:
                     select.select_by_visible_text(opt.text)
-                    print(f"Đã chọn domain: {opt.text}")
+                    print(f"   Đã chọn: {opt.text}")
                     found = True
                     break
+            
             if not found:
-                print("Không thấy domain, chọn mặc định.")
-        
-        # 3. Click Add
-        find_element_safe(driver, By.CSS_SELECTOR, "button[data-webdriver='button']", click=True)
-        print("Đã click nút Thêm. Đang check kết quả...")
+                print("   ⚠️ Không tìm thấy đuôi chính xác, chọn mặc định cái đầu tiên.")
+                select.select_by_index(0)
+        else:
+            print("⚠️ Không tìm thấy dropdown select.")
 
-        # 4. Check thông báo (Check HTML source cho chắc)
-        time.sleep(2)
-        for _ in range(5): # Check trong 5s
-            src = driver.page_source
-            if "erfolgreich angelegt" in src or "theme-icon-confirm" in src:
-                print(f"✅ [PASS] Kết quả: SUCCESS (Tạo thành công)")
-                return
-            if "nicht verfügbar" in src or "theme-icon-warn" in src:
-                print(f"⚠️ [PASS] Kết quả: EXIST (Mail đã tồn tại - đúng logic phát hiện lỗi)")
-                return
-            time.sleep(1)
+        # 3. NHẤN NÚT ADD
+        # Element bạn đưa: <button ... data-webdriver="button">
+        print("-> Nhấn nút Hinzufügen...")
+        if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-webdriver='button']", click=True):
+             raise Exception("Không tìm thấy nút Add.")
+
+        # 4. CHECK KẾT QUẢ (Handle Exception Success/Fail)
+        print("-> Đang kiểm tra kết quả...")
+        time.sleep(3) # Chờ server phản hồi
         
-        print("❓ [WARN] Không xác định được trạng thái.")
+        page_source = driver.page_source
+        
+        # Case Success: Thường có icon confirm hoặc text "erfolgreich"
+        if "erfolgreich" in page_source or "theme-icon-confirm" in page_source:
+            print(f"✅ [PASS] SUCCESS: Đã thêm thành công {uid}{domain_full}")
+            return "SUCCESS"
+            
+        # Case Fail: "nicht verfügbar" hoặc icon warn
+        elif "nicht verfügbar" in page_source or "theme-icon-warn" in page_source:
+            print(f"⚠️ [PASS] EXIST: Mail {uid}{domain_full} đã được sử dụng (Đúng logic).")
+            return "EXIST"
+            
+        else:
+            # Fallback: Check lại trong bảng xem có dòng mới chưa
+            if uid in page_source:
+                 print(f"✅ [PASS] SUCCESS: Tìm thấy mail trong bảng.")
+                 return "SUCCESS"
+                 
+            print("❓ [WARN] UNKNOWN: Không xác định được trạng thái.")
+            return "UNKNOWN"
 
     except Exception as e:
-        print(f"❌ [FAIL] Lỗi: {e}")
+        print(f"❌ [FAIL] Lỗi Step 4: {e}")
+        return "ERROR"
 
 if __name__ == "__main__":
-    test_add_alias()
+    driver = get_driver()
+    # Chạy full flow để test
+    if login_process(driver, USER, PASS):
+        if step_2_navigate(driver):
+            step_4_add_alias(driver, NEW_UID, NEW_DOMAIN)
