@@ -11,31 +11,31 @@ PASS = "muledok5P"
 def step_2_navigate(driver):
     print("\n--- START TEST STEP 2: NAVIGATE SETTINGS ---")
     try:
-        # 1. Trick đổi URL: mail -> mail_settings
+        # 1. Trick Change URL: mail -> mail_settings
         current_url = driver.current_url
-        print(f"-> URL hiện tại: {current_url}")
+        print(f"-> Current URL: {current_url}")
         if "mail?" in current_url:
             target_url = current_url.replace("mail?", "mail_settings?")
             driver.get(target_url)
-            print(f"-> Đã chuyển hướng sang: {target_url}")
-            time.sleep(3) # Chờ page settings load hẳn
+            print(f"-> Redirected to: {target_url}")
+            time.sleep(3) # Wait for page settings to load completely
         else:
-            print("⚠️ URL không chứa 'mail?', cố gắng tìm menu thủ công.")
+            print("⚠️ URL does not contain 'mail?', trying to find menu manually.")
 
-        # --- LOGIC TÌM MENUS (TINH GỌN & IM LẶNG) ---
-        print("-> Đang quét tìm menu 'E-Mail-Adressen' (ẩn lỗi)...")
+        # --- LOGIC FIND MENUS (COMPACT & SILENT) ---
+        print("-> Scanning for 'E-Mail-Adressen' menu (suppress errors)...")
         
         target_element = None
         
-        # Danh sách XPATH cần thử (theo thứ tự ưu tiên)
+        # List of XPATHs to try (priority order)
         search_xpaths = [
-            "//a[.//span[contains(text(), 'E-Mail-Adressen')]]",     # 1. Theo Text hiển thị (Chuẩn nhất)
-            "//a[@data-webdriver='ALL_EMAIL_ADDRESSES']",            # 2. Theo Attribute ẩn
-            "//a[contains(@href, 'allEmailAddresses')]"              # 3. Theo Link
+            "//a[.//span[contains(text(), 'E-Mail-Adressen')]]",     # 1. By Display Text (Standard)
+            "//a[@data-webdriver='ALL_EMAIL_ADDRESSES']",            # 2. By Hidden Attribute
+            "//a[contains(@href, 'allEmailAddresses')]"              # 3. By Link
         ]
 
         def scan_current_frame_silent():
-            """Hàm tìm nhanh trả về element đầu tiên thấy, không in lỗi"""
+            """Quick search function returns first element found, no error printing"""
             for xpath in search_xpaths:
                 elems = driver.find_elements(By.XPATH, xpath)
                 if elems:
@@ -45,7 +45,7 @@ def step_2_navigate(driver):
         # A. Check Main Frame
         target_element = scan_current_frame_silent()
         
-        # B. Check Iframes (Nếu Main Frame không có)
+        # B. Check Iframes (If not in Main Frame)
         if not target_element:
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
             # print(f"   (Đang quét {len(iframes)} iframes...)")

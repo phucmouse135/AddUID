@@ -3,31 +3,31 @@ import time
 from selenium.webdriver.common.by import By
 from gmx_core import get_driver, find_element_safe
 
-# --- DATA TEST MẶC ĐỊNH ---
+# --- DATA TEST DEFAULT ---
 DEF_USER = "saucycut1@gmx.de"
 DEF_PASS = "muledok5P"
 
 def login_process(driver, user, password):
     """
-    Hàm Login chuẩn (Code đã chốt).
-    Trả về True nếu login thành công, False nếu thất bại.
+    Standard Login Function.
+    Returns True if login success, False if failed.
     """
     try:
         print(f"--- START LOGIN PROCESS: {user} ---")
         
-        # 1. Vào trang
+        # 1. Enter site
         driver.get("https://www.gmx.net/")
         time.sleep(2)
         driver.get("https://www.gmx.net/") # Reload
         
-        # 2. Xử lý Consent
+        # 2. Handle Consent
         print("-> Check Consent...")
         find_element_safe(driver, By.ID, "onetrust-accept-btn-handler", timeout=5, click=True)
 
-        # 3. LOGIC TÌM LOGIN FORM (AUTO-SCAN)
-        print("-> Đang quét tìm vị trí Login Form (Main hoặc Iframe)...")
+        # 3. LOGIC FIND LOGIN FORM (AUTO-SCAN)
+        print("-> Scanning for Login Form (Main or Iframe)...")
         
-        # Danh sách selector tiềm năng cho username
+        # List of potential selectors for username
         user_selectors = [
             (By.CSS_SELECTOR, "input[data-testid='input-email']"),
             (By.NAME, "username"),
@@ -38,49 +38,49 @@ def login_process(driver, user, password):
 
         found_input = False
         
-        # 3.1. Kiểm tra ngay tại Main Content
+        # 3.1. Check Main Content
         for by_m, val_m in user_selectors:
             if find_element_safe(driver, by_m, val_m, timeout=1):
-                print(f"✅ Tìm thấy Login Input ở Main Content ({val_m})")
+                print(f"✅ Found Login Input in Main Content ({val_m})")
                 found_input = True
                 break
         
-        # 3.2. Nếu chưa thấy, quét từng Iframe
+        # 3.2. If not found, scan Iframes
         if not found_input:
-            print("   Không thấy ở Main, bắt đầu quét các Iframe...")
+            print("   Not found in Main, scanning Iframes...")
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
-            print(f"   Tìm thấy {len(iframes)} iframes.")
+            print(f"   Found {len(iframes)} iframes.")
             
             for index, iframe in enumerate(iframes):
                 try:
-                    driver.switch_to.default_content() # Reset về main trước khi switch cái mới
+                    driver.switch_to.default_content() # Reset to main before switch
                     driver.switch_to.frame(iframe)
                     
-                    # Kiểm tra thử xem có input login không
+                    # Check for login input
                     for by_f, val_f in user_selectors:
-                        # Chỉ check nhanh (timeout ngắn)
+                        # Quick check (short timeout)
                         elem = find_element_safe(driver, by_f, val_f, timeout=1)
                         if elem:
-                            print(f"✅ Đã tìm thấy Login Input trong Iframe thứ {index+1}")
+                            print(f"✅ Found Login Input in Iframe #{index+1}")
                             found_input = True
                             break
                     
-                    if found_input: break # Đã tìm thấy đúng iframe, giữ nguyên context ở đây
+                    if found_input: break # Found correct iframe, stay in this context
                     
                 except Exception:
-                    continue # Iframe lỗi hoặc chặn access, bỏ qua
+                    continue # Iframe error or blocked, skip
             
             if not found_input:
-                # Nếu quét hết vẫn không thấy, thử lại fallback cũ (iframe main-content)
+                # If scan fails, try old fallback (main-content iframe)
                 driver.switch_to.default_content()
-                print("⚠️ Quét thất bại. Thử fallback selector cũ...")
+                print("⚠️ Scan failed. Trying fallback selector...")
                 iframe_fallback = find_element_safe(driver, By.CSS_SELECTOR, ".main-content iframe")
                 if iframe_fallback:
                     driver.switch_to.frame(iframe_fallback)
 
-        # 5. ĐIỀN USERNAME (Context đã ở đúng chỗ sau luồng quét trên)
-        print("-> Thực hiện điền Username...")
-        # (Lặp lại logic điền an toàn)
+        # 5. ENTER USERNAME (Context is correct after scan)
+        print("-> Entering Username...")
+        # (Retry safe fill logic)
         filled = False
         for by_u, val_u in user_selectors:
             if find_element_safe(driver, by_u, val_u, send_keys=user):
@@ -88,67 +88,108 @@ def login_process(driver, user, password):
                 break
                 
         if not filled:
-             print("❌ Vẫn không thể điền Username sau khi quét.")
+             print("❌ Still cannot enter Username after scan.")
              return False
 
-        print(f"   Đã nhập: {user}")
+        print(f"   Entered: {user}")
 
-        # 6. CLICK NÚT WEITER
-        print("-> Nhấn nút Weiter...")
+        # 6. CLICK NEXT/WEITER
+        print("-> Clicking Next/Weiter...")
         # Priority: data-testid -> type=submit -> id
         if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-testid='login-submit']", click=True):
             if not find_element_safe(driver, By.CSS_SELECTOR, "button[type='submit']", click=True):
                  if not find_element_safe(driver, By.ID, "login-submit", click=True):
-                     print("❌ Không tìm thấy nút Weiter.")
-                     # return False # Có thể thử tiếp, ko return vội
+                     print("❌ Next button not found.")
+                     # return False # Try continuing
 
-        # 7. TÌM PASSWORD
-        print("-> Đang điền Password...")
+        # 7. ENTER PASSWORD
+        print("-> Entering Password...")
         # Priority: data-testid -> id -> name -> xpath
         if not find_element_safe(driver, By.CSS_SELECTOR, "input[data-testid='input-password']", timeout=10, send_keys=password):
             if not find_element_safe(driver, By.ID, "password", send_keys=password):
                 if not find_element_safe(driver, By.NAME, "password", send_keys=password):
-                    # Fallback XPath chung
+                    # Fallback XPath
                      if not find_element_safe(driver, By.XPATH, "//input[@type='password']", send_keys=password):
-                         print("❌ Không tìm thấy input #password.")
+                         print("❌ Password input not found.")
                          return False
-        print("   Đã nhập Password.")
+        print("   Password entered.")
 
-        # 8. CLICK LOGIN LẦN CUỐI
+        # 8. CLICK LOGIN FINAL
         # Priority: data-testid -> type=submit
         if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-testid='login-submit']", click=True):
             find_element_safe(driver, By.CSS_SELECTOR, "button[type='submit']", click=True)
-        print("-> Đã nhấn Login.")
+        print("-> Clicked Login.")
 
-        # 9. CHECK KẾT QUẢ
+        # 9. CHECK RESULT
         driver.switch_to.default_content()
-        print("-> Đang chờ chuyển trang...")
+        print("-> Waiting for redirection...")
         
         for _ in range(20):
             if "navigator" in driver.current_url:
-                print(f"✅ [PASS] Đăng nhập thành công! URL: {driver.current_url}")
+                print(f"✅ [PASS] Login Success! URL: {driver.current_url}")
                 return True
             time.sleep(1)
             
-        print("❌ [FAIL] Timeout: Không vào được trang navigator.")
+        print("❌ [FAIL] Timeout: Did not reach navigator page.")
         return False
 
     except Exception as e:
-        print(f"❌ [FAIL] Lỗi Login: {e}")
+        print(f"❌ [FAIL] Login Error: {e}")
         return False
 
-# Code chạy thử nếu chạy file này trực tiếp
+# Test run if file executed directly
 if __name__ == "__main__":
-    driver = get_driver()
-    try:
-        login_process(driver, DEF_USER, DEF_PASS)
-        # Giữ lại trình duyệt một chút để kịp nhìn thấy kết quả trước khi đóng (nếu muốn)
-        # time.sleep(5) 
-    except Exception:
-        pass
-    finally:
-        # Chủ động đóng driver để tránh lỗi [WinError 6] trong __del__
+    import os
+    INPUT_TEST = "input.txt"
+    
+    if os.path.exists(INPUT_TEST):
+        print(f"--- BULK TEST MODE: Reading {INPUT_TEST} ---")
+
+        output_path = "output.txt"
         try:
-            driver.quit()
-        except OSError:
-            pass  # Bỏ qua lỗi handle invalid nếu driver đã chết thực sự
+            with open(INPUT_TEST, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            # Skip header if present
+            start_line = 0
+            if len(lines) > 0 and "UID" in lines[0]:
+                start_line = 1
+            # Prepare output file (overwrite)
+            with open(output_path, "w", encoding="utf-8") as fout:
+                fout.write("uid\tresult\n")
+                for idx, line in enumerate(lines[start_line:]):
+                    line = line.strip()
+                    if not line: continue
+                    parts = line.split('\t')
+                    if len(parts) < 2: parts = line.split()
+                    # Assume Format: ... [User Col 5] [Pass Col 6]
+                    if len(parts) >= 7:
+                        t_uid = parts[0]
+                        t_user = parts[5]
+                        t_pass = parts[6]
+                        print(f"\n[{idx+1}] Testing Account: {t_user}")
+                        driver = get_driver(headless=False)
+                        try:
+                            login_success = login_process(driver, t_user, t_pass)
+                            print(f"Result {t_user}: {'OK' if login_success else 'FAIL'}")
+                            fout.write(f"{t_uid}\t{'success' if login_success else 'fail'}\n")
+                        except Exception as e:
+                            print(f"Error {t_user}: {e}")
+                            fout.write(f"{t_uid}\tfail\n")
+                        finally:
+                            try: driver.quit()
+                            except: pass
+                    else:
+                        print(f"Skipping invalid line: {line}")
+        except Exception as e:
+            print(f"File read error: {e}")
+            
+    else:
+        print("--- SINGLE TEST DEFAULT ---")
+        driver = get_driver()
+        try:
+            login_process(driver, DEF_USER, DEF_PASS)
+        except Exception:
+            pass
+        finally:
+            try: driver.quit()
+            except: pass

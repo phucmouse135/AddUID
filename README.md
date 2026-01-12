@@ -54,3 +54,10 @@ python gui.py
 *   **Retry Logic:** Tự động thử lại 3 lần nếu Login thất bại.
 *   **Export:** Xuất kết quả Thành công / Thất bại riêng biệt.
 *   **Resume:** Tự động bỏ qua các case đã chạy thành công khi bấm Start lại.
+
+## Backup UID (Retry)
+*   **File:** `backup_uids.txt` (format: `UID<TAB>EMAIL`, email co the bo trong).
+*   **Flow:** Neu add alias bi trung (theme-icon-warn / "nicht verf"), tool se lay UID tiep theo trong backup va retry.
+*   **Consume:** UID backup duoc su dung se bi xoa khoi `backup_uids.txt` ngay lap tuc.
+*   **Input update:** Neu add thanh cong voi UID backup, dong trong input se duoc cap nhat lai (UID + email moi).
+*   **GUI:** Tab "Backup UID (Retry)" cho phep Load/Save/Clear va nhap thu cong danh sach backup.
