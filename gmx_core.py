@@ -58,6 +58,8 @@ def find_element_safe(driver, by, value, timeout=TIMEOUT_MAX, click=False, send_
     """
     end_time = time.time() + timeout
     while time.time() < end_time:
+        if reload_if_ad_popup(driver):
+            return None
         try:
             element = driver.find_element(by, value)
             
@@ -89,7 +91,7 @@ def reload_if_ad_popup(driver, url="https://www.gmx.net/"):
         except Exception:
             current_url = ""
 
-        if current_url == "https://suche.gmx.net/web?origin=HP":
+        if current_url.startswith("https://suche.gmx.net/web"):
             driver.get(url)
             time.sleep(2)
             return True
@@ -104,12 +106,35 @@ def reload_if_ad_popup(driver, url="https://www.gmx.net/"):
                 time.sleep(2)
                 return True
 
+        for button in driver.find_elements(By.TAG_NAME, "button"):
+            try:
+                text = button.text.strip()
+            except Exception:
+                text = ""
+            if text in ("Akzeptieren und weiter", "Zum Abo ohne Fremdwerbung"):
+                driver.get(url)
+                time.sleep(2)
+                return True
+
         try:
             page_source = driver.page_source
         except Exception:
             page_source = ""
 
-        if "Wir finanzieren uns" in page_source and "Werbung" in page_source:
+        page_lower = page_source.lower()
+        if "wir finanzieren uns" in page_lower:
+            popup_hints = [
+                "werbung",
+                "akzeptieren und weiter",
+                "zum abo ohne fremdwerbung",
+                "postfach ohne fremdwerbebanner",
+                "abfrage nochmals anzeigen",
+            ]
+            if any(hint in page_lower for hint in popup_hints):
+                driver.get(url)
+                time.sleep(2)
+                return True
+        elif "wir finanzieren uns" in page_source and "Werbung" in page_source:
             driver.get(url)
             time.sleep(2)
             return True
