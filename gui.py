@@ -7,17 +7,12 @@ import time
 import os
 from queue import Queue
 
-# Import logic từ main.py (cần điều chỉnh main.py một chút để hỗ trợ gọi từ GUI)
-# Chúng ta sẽ cần chỉnh lại main.py để tách hàm process_single_account ra cho dễ gọi
-# hoặc import nguyên logic xử lý.
-# Để đơn giản và an toàn, ta sẽ import hàm xử lý 1 account từ main.py
+# Import logic from main.py
 try:
     from main import process_single_account, load_backup_uids, backup_uids_queue
 except ImportError as e:
-    # Yêu cầu CHẠY THẬT: Nếu không thấy main.py thì báo lỗi và thoát
-    # Không dùng Mock data nữa
-    print(f"❌ [CRITICAL ERROR] Không thể import 'process_single_account' từ main.py!")
-    print(f"Chi tiết lỗi: {e}")
+    print(f"❌ [CRITICAL ERROR] Cannot import 'process_single_account' from main.py!")
+    print(f"Detail: {e}")
     sys.exit(1)
 
 # --- CONSTANTS ---
@@ -34,6 +29,7 @@ class GmxToolApp:
         self.file_path_var = tk.StringVar(value="input.txt")
         self.thread_count_var = tk.IntVar(value=1)
         self.headless_var = tk.BooleanVar(value=False)
+        self.proxy_port_var = tk.StringVar(value="") # New 9Proxy Port
         self.status_var = tk.StringVar(value="Ready")
         
         self.is_running = False
@@ -50,25 +46,32 @@ class GmxToolApp:
 
     def _setup_ui(self):
         # 1. Top Frame: Config & File Input
-        top_frame = ttk.LabelFrame(self.root, text="Cấu hình & Input", padding=10)
+        top_frame = ttk.LabelFrame(self.root, text="Configuration & Input", padding=10)
         top_frame.pack(fill="x", padx=10, pady=5)
 
-        # Row 1: File Selection
+        # Row 0: File Parsing
         ttk.Label(top_frame, text="File Path:").grid(row=0, column=0, padx=5, sticky="w")
         ttk.Entry(top_frame, textvariable=self.file_path_var, width=50).grid(row=0, column=1, padx=5)
         ttk.Button(top_frame, text="Browse...", command=self.browse_file).grid(row=0, column=2, padx=5)
         ttk.Button(top_frame, text="Load Data", command=self.load_data).grid(row=0, column=3, padx=5)
-        ttk.Button(top_frame, text="Nhập Thủ Công", command=self.manual_input_dialog).grid(row=0, column=4, padx=5)
+        ttk.Button(top_frame, text="Manual Input", command=self.manual_input_dialog).grid(row=0, column=4, padx=5)
 
-        # Row 2: Settings
-        ttk.Label(top_frame, text="Số luồng (Threads):").grid(row=1, column=0, padx=5, sticky="w", pady=5)
+        # Row 1: Settings (Threads, Headless, Proxy)
+        ttk.Label(top_frame, text="Threads:").grid(row=1, column=0, padx=5, sticky="w", pady=5)
         ttk.Spinbox(top_frame, from_=1, to=10, textvariable=self.thread_count_var, width=5).grid(row=1, column=1, sticky="w", padx=5)
         
-        ttk.Checkbutton(top_frame, text="Chạy ẩn (Headless)", variable=self.headless_var).grid(row=1, column=2, sticky="w", padx=5)
+        # Checkbox Headless
+        ttk.Checkbutton(top_frame, text="Run Headless", variable=self.headless_var).grid(row=1, column=2, sticky="w", padx=5)
         
-        # Delete Buttons (Moved out of context menu)
-        ttk.Button(top_frame, text="Xóa Dòng Chọn", command=self.delete_selected_rows).grid(row=1, column=3, padx=5)
-        ttk.Button(top_frame, text="Xóa Tất Cả", command=self.clear_table).grid(row=1, column=4, padx=5)
+        # New: 9Proxy Port Input
+        proxy_frame = ttk.Frame(top_frame)
+        proxy_frame.grid(row=1, column=3, padx=5, sticky="w")
+        ttk.Label(proxy_frame, text="9Proxy Port:").pack(side="left")
+        ttk.Entry(proxy_frame, textvariable=self.proxy_port_var, width=10).pack(side="left", padx=5)
+
+        # Helper buttons
+        ttk.Button(top_frame, text="Delete Selected", command=self.delete_selected_rows).grid(row=1, column=4, padx=5)
+        ttk.Button(top_frame, text="Delete All", command=self.clear_table).grid(row=1, column=5, padx=5)
 
         # 2. Middle Frame: Notebook (Tabs)
         mid_frame = ttk.Frame(self.root, padding=5)
@@ -77,9 +80,9 @@ class GmxToolApp:
         self.notebook = ttk.Notebook(mid_frame)
         self.notebook.pack(fill="both", expand=True)
 
-        # TAB 1: DANH SÁCH CHÍNH
+        # TAB 1: MAIN LIST
         self.tab_main = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_main, text="Danh sách Tài khoản")
+        self.notebook.add(self.tab_main, text="Account List")
         
         # Scrollbar Tab 1
         scroll_y_main = ttk.Scrollbar(self.tab_main, orient="vertical")
@@ -113,7 +116,7 @@ class GmxToolApp:
         ttk.Button(bak_ctrl_frame, text="Load Backup File", command=self.load_backup_data).pack(side="left", padx=5)
         ttk.Button(bak_ctrl_frame, text="Save Backup File", command=self.save_backup_data).pack(side="left", padx=5)
         ttk.Button(bak_ctrl_frame, text="Clear Backup", command=self.clear_backup_table).pack(side="left", padx=5)
-        ttk.Button(bak_ctrl_frame, text="Nhập Backup Thủ Công", command=self.manual_backup_input).pack(side="left", padx=5)
+        ttk.Button(bak_ctrl_frame, text="Manual Backup Input", command=self.manual_backup_input).pack(side="left", padx=5)
 
         # Treeview Backup
         scroll_y_bak = ttk.Scrollbar(self.tab_backup, orient="vertical")
@@ -134,14 +137,14 @@ class GmxToolApp:
         # load default backup if exists
         self.root.after(500, self.load_backup_data)
 
-        # Context Menu cho Table (Click chuột phải)
+        # Context Menu
         self.context_menu = tk.Menu(self.tree, tearoff=0)
-        self.context_menu.add_command(label="Xóa dòng chọn", command=self.delete_selected_rows)
-        self.context_menu.add_command(label="Xóa tất cả", command=self.clear_table)
+        self.context_menu.add_command(label="Delete Selected", command=self.delete_selected_rows)
+        self.context_menu.add_command(label="Delete All", command=self.clear_table)
         self.tree.bind("<Button-3>", self.show_context_menu)
 
         # 3. Bottom Frame: Controls & Stats
-        bot_frame = ttk.LabelFrame(self.root, text="Điều khiển & Thống kê", padding=10)
+        bot_frame = ttk.LabelFrame(self.root, text="Controls & Stats", padding=10)
         bot_frame.pack(fill="x", padx=10, pady=5)
 
         # Buttons
@@ -153,9 +156,9 @@ class GmxToolApp:
 
         ttk.Separator(bot_frame, orient="vertical").pack(side="left", fill="y", padx=10)
         
-        ttk.Button(bot_frame, text="Xuất Thất Bại", command=lambda: self.export_data(filter_mode="FAIL")).pack(side="right", padx=5)
-        ttk.Button(bot_frame, text="Xuất Thành Công", command=lambda: self.export_data(filter_mode="SUCCESS")).pack(side="right", padx=5)
-        ttk.Button(bot_frame, text="Xuất Tất Cả", command=lambda: self.export_data(filter_mode="ALL")).pack(side="right", padx=5)
+        ttk.Button(bot_frame, text="Export Failed", command=lambda: self.export_data(filter_mode="FAIL")).pack(side="right", padx=5)
+        ttk.Button(bot_frame, text="Export Success", command=lambda: self.export_data(filter_mode="SUCCESS")).pack(side="right", padx=5)
+        ttk.Button(bot_frame, text="Export All", command=lambda: self.export_data(filter_mode="ALL")).pack(side="right", padx=5)
 
         # Labels Stats
         self.lbl_progress = ttk.Label(bot_frame, text="Progress: 0/0")
@@ -177,7 +180,7 @@ class GmxToolApp:
     def load_data(self):
         path = self.file_path_var.get()
         if not os.path.exists(path):
-            messagebox.showerror("Error", "File không tồn tại!")
+            messagebox.showerror("Error", "File not found!")
             return
             
         try:
@@ -197,18 +200,6 @@ class GmxToolApp:
                 while len(parts) < 8: parts.append("")
                 
                 # Insert to tree
-                # Mapping: uid, mail_lk, user_ig, pass_ig, 2fa, phoi_goc, pass_mail, khoi_phuc, note
-                # Chú ý logic index từ file: 
-                # Col 0: uid_add
-                # Col 1: mail_lk_ig
-                # Col 2: user_ig
-                # Col 3: pass_ig
-                # Col 4: 2fa
-                # Col 5: phoi_goc (login_user)
-                # Col 6: pass_mail
-                # Col 7: khoi_phuc
-                
-                # Safe get
                 uid = parts[0] if len(parts)>0 else ""
                 mail_lk = parts[1] if len(parts)>1 else ""
                 user_ig = parts[2] if len(parts)>2 else ""
@@ -220,25 +211,23 @@ class GmxToolApp:
 
                 values = (uid, mail_lk, user_ig, pass_ig, fa, phoi_goc, pass_mail, kp, "Pending")
                 
-                # Lưu raw line vào tag để dùng lại khi xử lý
+                # Save raw line for later use
                 raw_line = line
                 self.tree.insert("", "end", values=values, tags=(raw_line,))
                 count += 1
                 
             self.total_tasks = count
             self.update_stats()
-            messagebox.showinfo("Info", f"Đã load {count} dòng.")
+            messagebox.showinfo("Info", f"Loaded {count} rows.")
             
         except Exception as e:
-            messagebox.showerror("Lỗi đọc file", str(e))
+            messagebox.showerror("Read Error", str(e))
 
     def manual_input_dialog(self):
-        help_text = "Định dạng: UID[tab]MAIL_LK[tab]USER[tab]PASS[tab]2FA[tab]PHÔI_GỐC[tab]PASS_MAIL[tab]MAIL_KP"
-        inp = simpledialog.askstring("Nhập thủ công", f"{help_text}\n\nDán dữ liệu vào đây (mỗi dòng 1 acc):")
+        help_text = "Format: UID[tab]MAIL_LK[tab]USER[tab]PASS[tab]2FA[tab]ORIG_MAIL[tab]PASS_MAIL[tab]RECOVERY_MAIL"
+        inp = simpledialog.askstring("Manual Input", f"{help_text}\n\nPaste data here (one per line):")
         if inp:
-            self.clear_table()
             lines = inp.strip().split("\n")
-            # Reuse logic load (quick hack: save to temp then load)
             for line in lines:
                 parts = line.split('\t')
                 if len(parts) < 2: parts = line.split()
@@ -295,7 +284,6 @@ class GmxToolApp:
                 note = "Ready"
                 self.tree_backup.insert("", "end", values=(uid, mail, note))
         except Exception as e:
-            # Silent fail or log
             print(f"Load backup error: {e}")
 
     def save_backup_data(self):
@@ -307,7 +295,7 @@ class GmxToolApp:
                     # Save format: UID \t MAIL
                     line = f"{vals[0]}\t{vals[1]}"
                     f.write(line + "\n")
-            messagebox.showinfo("Backup", "Đã lưu danh sách backup!")
+            messagebox.showinfo("Backup", "Backup list saved!")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -316,7 +304,7 @@ class GmxToolApp:
             self.tree_backup.delete(item)
 
     def manual_backup_input(self):
-        inp = simpledialog.askstring("Nhập Backup", "Dán danh sách backup (UID [tab] MAIL):")
+        inp = simpledialog.askstring("Input Backup", "Paste backup list (UID [tab] MAIL):")
         if inp:
             lines = inp.strip().split("\n")
             for line in lines:
@@ -332,11 +320,8 @@ class GmxToolApp:
         current_values = list(self.tree.item(item_id, "values"))
         msg = status
         if error_msg: msg += f" ({error_msg})"
-        current_values[-1] = msg # Cột Note ở cuối
+        current_values[-1] = msg # Note column at end
         self.tree.item(item_id, values=current_values)
-        
-        # LOGIC UPDATE STATS:
-        # User yêu cầu: Khi đang chạy (Running) thì đã tính vào Progress (ví dụ 4 running -> 4/32)
         
         if status == "Running...":
             self.completed_tasks += 1
@@ -345,7 +330,7 @@ class GmxToolApp:
         is_finished = "Pending" not in status and "Running" not in status
         
         if is_finished:
-            # Không cộng completed_tasks ở đây nữa (vì đã cộng lúc Running)
+            # Stats (completed) already incremented at Running phase
             if "SUCCESS" in status:
                 self.success_count += 1
                 self.tree.item(item_id, tags=("success",))
@@ -361,7 +346,7 @@ class GmxToolApp:
         
         items = self.tree.get_children()
         if not items:
-            messagebox.showwarning("Warning", "Chưa có dữ liệu để chạy!")
+            messagebox.showwarning("Warning", "No data to run!")
             return
 
         self.is_running = True
@@ -369,7 +354,7 @@ class GmxToolApp:
         
         self.btn_start.config(state="disabled")
         self.btn_stop.config(state="normal")
-        self.status_var.set("Đang chạy...")
+        self.status_var.set("Running...")
         
         # Reset counter
         self.completed_tasks = 0
@@ -379,12 +364,19 @@ class GmxToolApp:
         self.tasks_queue = Queue()
         queued_count = 0
 
+        # Get Proxy Port
+        proxy_port_val = self.proxy_port_var.get().strip()
+        if not proxy_port_val: proxy_port_val = None
+        input_path = self.file_path_var.get()
+        if not os.path.exists(input_path):
+            input_path = None
+
         for item_id in items:
-            # Lấy data từ columns
+            # Get data from columns
             vals = self.tree.item(item_id, "values")
             status_note = vals[-1]
 
-            # FILTER: Nếu đã SUCCESS_ADDED thì bỏ qua, không chạy lại
+            # FILTER: If already SUCCESS_ADDED, skip
             if "SUCCESS_ADDED" in status_note:
                 self.completed_tasks += 1
                 self.success_count += 1
@@ -392,7 +384,7 @@ class GmxToolApp:
             
             queued_count += 1
 
-            # Build task object giống main.py
+            # Build task object
             task = {
                 "item_id": item_id,
                 "uid_new": vals[0],
@@ -400,11 +392,12 @@ class GmxToolApp:
                 "login_user": vals[5],
                 "login_pass": vals[6],
                 "raw_line": "\t".join(vals[:-1]),
-                "headless": self.headless_var.get() # Pass headless option
+                "headless": self.headless_var.get(),
+                "proxy_port": proxy_port_val, # Pass Port
+                "input_path": input_path
             }
-            # Update status pending (Note: update_row_status đã lọc ko cộng stats cho Pending)
-            self.update_row_status(item_id, "Pending") 
             
+            self.update_row_status(item_id, "Pending") 
             self.tasks_queue.put(task)
         
         self.update_stats()
@@ -413,17 +406,11 @@ class GmxToolApp:
             self.is_running = False
             self.btn_start.config(state="normal")
             self.btn_stop.config(state="disabled")
-            self.status_var.set("Hoàn tất (Skip all)")
-            messagebox.showinfo("Info", "Tất cả các dòng đều đã là SUCCESS_ADDED.\nKhông có gì để chạy!")
+            self.status_var.set("Finished (Skip all)")
+            messagebox.showinfo("Info", "All rows are already SUCCESS_ADDED.\nNothing to run!")
             return
 
-        # Ensure backup queue is populated from file before starting
-        # Since main.py logic reads from file, we ensure file is saved first
         self.save_backup_data() 
-        # Then trigger reload in main logic (accessing module level function)
-        # We need to access the queue directly or call load function.
-        # Since logic in main.backup_uids_queue persists in memory if module loaded, 
-        # we should clear it and reload to be safe.
         with backup_uids_queue.mutex:
             backup_uids_queue.queue.clear()
         load_backup_uids()
@@ -434,14 +421,14 @@ class GmxToolApp:
 
     def stop_process(self):
         if not self.is_running: return
-        self.status_var.set("Đang dừng... Đợi các luồng kết thúc...")
+        self.status_var.set("Stopping... Waiting for threads...")
         self.stop_event.set()
         # Drain queue
         with self.tasks_queue.mutex:
             self.tasks_queue.queue.clear()
 
     def worker_manager(self, num_threads):
-        """Quản lý ThreadPoolExecutor với việc giới hạn số lượng task submit"""
+        """Manage ThreadPoolExecutor with task submission limit"""
         from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
         
         future_map = {}
@@ -449,39 +436,35 @@ class GmxToolApp:
 
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             
-            # Loop loop until queue is empty AND no active futures are left
             while (not self.tasks_queue.empty() or futures) and not self.stop_event.is_set():
                 
-                # 1. Fill up the pool with tasks until we reach num_threads
+                # 1. Fill up the pool
                 while len(futures) < num_threads and not self.tasks_queue.empty():
                     if self.stop_event.is_set(): break
                     
                     try:
                         task = self.tasks_queue.get_nowait()
-                        
-                        # UPDATE STATUS: Running (Only for the ones actively submitted)
                         self.root.after(0, self.update_row_status, task['item_id'], "Running...")
                         
                         future = executor.submit(process_single_account, task)
                         futures.add(future)
                         future_map[future] = task
                     except:
-                        break # Queue empty
+                        break 
                 
                 if not futures:
                     break
                     
-                # 2. Wait for at least one future to complete
+                # 2. Wait
                 done, _ = wait(futures, return_when=FIRST_COMPLETED)
                 
-                # 3. Process completed futures
+                # 3. Process completed
                 for future in done:
                     futures.remove(future)
                     task = future_map.pop(future)
                     
                     try:
                         res_raw = future.result()
-                        # res_raw format: "raw_line\tSTATUS"
                         status = res_raw.split('\t')[-1]
                         self.root.after(0, self.update_row_status, task['item_id'], status)
                     except Exception as e:
@@ -494,8 +477,8 @@ class GmxToolApp:
     def _on_process_finished(self):
         self.btn_start.config(state="normal")
         self.btn_stop.config(state="disabled")
-        self.status_var.set("Hoàn tất!")
-        messagebox.showinfo("Done", "Đã hoàn thành công việc.")
+        self.status_var.set("Completed!")
+        messagebox.showinfo("Done", "Job finished.")
 
     def export_data(self, filter_mode="ALL"):
         # filter_mode: "ALL", "SUCCESS", "FAIL"
@@ -521,7 +504,6 @@ class GmxToolApp:
                         if not is_success: continue
                     
                     elif filter_mode == "FAIL":
-                        # Fail là những cái ĐÃ CHẠY xong nhưng KHÔNG Success
                         if is_success or is_running_pending: continue
                         
                     # filter_mode == "ALL" -> Take all
@@ -530,13 +512,12 @@ class GmxToolApp:
                     f.write(line + "\n")
                     count += 1
             
-            messagebox.showinfo("Export", f"Đã xuất {count} dòng ({filter_mode})!")
+            messagebox.showinfo("Export", f"Exported {count} lines ({filter_mode})!")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
 if __name__ == "__main__":
     root = tk.Tk()
-    # Style customization (Optional)
     style = ttk.Style()
     style.configure("Treeview", rowheight=25)
     

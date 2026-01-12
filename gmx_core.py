@@ -6,25 +6,27 @@ from selenium.webdriver.common.action_chains import ActionChains
 from fake_useragent import UserAgent
 
 # --- CẤU HÌNH ---
-TIMEOUT_MAX = 15  # Số giây tối đa chờ 1 element
-SLEEP_INTERVAL = 1 # Thời gian nghỉ giữa các lần check
-PROXY_SERVER = "http://127.0.0.1:60000" # 9Proxy local port
+TIMEOUT_MAX = 15  # Max seconds wait for element
+SLEEP_INTERVAL = 1 
+PROXY_HOST = "127.0.0.1"
 
-def get_driver(headless=False):
-    """Khởi tạo trình duyệt với cấu hình tối ưu + Proxy + Fake UA"""
+def get_driver(headless=False, proxy_port=None):
+    """Initialize browser with config + Proxy + Fake UA"""
     options = uc.ChromeOptions()
     
     # 1. Fake IP (9Proxy)
-    options.add_argument(f'--proxy-server={PROXY_SERVER}')
+    if proxy_port:
+        proxy_server = f"http://{PROXY_HOST}:{proxy_port}"
+        options.add_argument(f'--proxy-server={proxy_server}')
+        print(f"[CORE] Proxy set to: {proxy_server}")
+    else:
+        # Default fallback or no proxy
+        pass 
     
-    # 2. Fake User Agent
-    try:
-        ua = UserAgent()
-        user_agent = ua.random
-        print(f"[CORE] UserAgent: {user_agent}")
-        options.add_argument(f'--user-agent={user_agent}')
-    except Exception as e:
-        print(f"[CORE] Lỗi tạo Fake UserAgent: {e}")
+    # 2. Static User Agent (no network call)
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    print(f"[CORE] UserAgent: {user_agent}")
+    options.add_argument(f'--user-agent={user_agent}')
 
     # 3. Chống detect cơ bản
     if headless:
@@ -38,7 +40,7 @@ def get_driver(headless=False):
     prefs = {"profile.managed_default_content_settings.images": 2}
     options.add_experimental_option("prefs", prefs)
     
-    print(f"[CORE] Đang mở trình duyệt (Proxy: {PROXY_SERVER})...")
+    print(f"[CORE] Opening Browser (Headless: {headless})...")
     driver = uc.Chrome(options=options)
     
     # 4. Bypass detection script thêm sau khi init

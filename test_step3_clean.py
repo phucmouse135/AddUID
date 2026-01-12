@@ -14,40 +14,40 @@ def step_3_cleanup(driver, original_email):
     action = ActionChains(driver)
     
     try:
-        # Vòng lặp "Quét -> Xóa -> Quét lại" để tránh lỗi DOM
+        # Loop "Scan -> Delete -> Re-scan" to avoid DOM errors
         while True:
-            time.sleep(2) # Chờ bảng ổn định
+            time.sleep(2) # Wait for table stability
             
-            # Tìm tất cả các dòng trong bảng
+            # Find all rows in table
             # Selector: .table_body .table_body-row
             rows = driver.find_elements(By.CSS_SELECTOR, ".table_body .table_body-row")
             
-            print(f"-> Đang quét {len(rows)} dòng...")
+            print(f"-> Scanning {len(rows)} rows...")
             found_trash = False
             
             for row in rows:
                 try:
-                    # Lấy text trong dòng. Cấu trúc bạn đưa: .table_field strong
+                    # Get text in row. Structure: .table_field strong
                     # <div class="table_field ..."> <strong> saucycut1@gmx.de </strong> ... </div>
                     try:
                         email_text = row.find_element(By.CSS_SELECTOR, ".table_field strong").text.strip()
                     except:
-                        email_text = row.text.strip() # Fallback lấy full text row
+                        email_text = row.text.strip() # Fallback get full row text
                     
                     if original_email in email_text:
-                        # Đây là mail gốc -> Bỏ qua
+                        # This is original mail -> Skip
                         continue
                     
-                    # Nếu chạy xuống đây nghĩa là Mail Rác
-                    print(f"-> Phát hiện rác: {email_text}")
+                    # If reaches here, it's Trash Mail
+                    print(f"-> Detected trash: {email_text}")
                     found_trash = True
                     
-                    # 1. HOVER CHUỘT (Bắt buộc để hiện nút xóa)
+                    # 1. MOUSE HOVER (Required to show delete button)
                     action.move_to_element(row).perform()
                     time.sleep(0.5)
                     
-                    # 2. CLICK NÚT XÓA
-                    # Selector nút xóa bạn đưa: a[title='E-Mail-Adresse löschen']
+                    # 2. CLICK DELETE BUTTON
+                    # Delete button selector: a[title='E-Mail-Adresse löschen']
                     # Ta tìm nút này *bên trong* dòng row hiện tại
                     trash_btn = row.find_element(By.CSS_SELECTOR, "a[title='E-Mail-Adresse löschen']")
                     trash_btn.click()

@@ -6,11 +6,11 @@ from gmx_core import get_driver, find_element_safe
 from step1_login import login_process
 from test_step2_nav import step_2_navigate
 
-# DATA TEST
+# LOG TEST DATA
 USER = "saucycut1@gmx.de"
 PASS = "muledok5P"
 NEW_UID = "nubily"
-NEW_DOMAIN = "@gmx.de" # Hoặc gmx.net tùy data
+NEW_DOMAIN = "@gmx.de" # Or gmx.net depending on data
 
 def step_4_add_alias(driver, uid, domain_full):
     print("\n--- START TEST STEP 4: ADD NEW ALIAS ---")
@@ -19,18 +19,18 @@ def step_4_add_alias(driver, uid, domain_full):
     for attempt in range(1, 4):
         try:
             if attempt > 1:
-                print(f"🔄 [RETRY] Lần {attempt}/3: Refreshing page...")
+                print(f"🔄 [RETRY] Attempt {attempt}/3: Refreshing page...")
                 driver.refresh()
                 time.sleep(3)
 
-            # 1. NHẬP UID
-            print(f"-> Nhập UID (Attempt {attempt}): {uid}")
+            # 1. ENTER UID
+            print(f"-> Enter UID (Attempt {attempt}): {uid}")
             if not find_element_safe(driver, By.CSS_SELECTOR, "input[data-webdriver='localPart']", send_keys=uid):
-                # Nếu không thấy input, có thể do lỗi load trang -> Raise để trigger retry
-                raise Exception("Không tìm thấy ô nhập UID")
+                # If input not found, load error -> Raise to trigger retry
+                raise Exception("UID Input not found")
 
-            # 2. CHỌN ĐUÔI MAIL
-            print(f"-> Chọn Domain: {domain_full}")
+            # 2. SELECT DOMAIN
+            print(f"-> Select Domain: {domain_full}")
             select_element = find_element_safe(driver, By.CSS_SELECTOR, "fieldset select")
             
             if select_element:
@@ -41,44 +41,60 @@ def step_4_add_alias(driver, uid, domain_full):
                 for opt in select.options:
                     if domain_part in opt.text:
                         select.select_by_visible_text(opt.text)
-                        print(f"   Đã chọn: {opt.text}")
+                        print(f"   Selected: {opt.text}")
                         found = True
                         break
                 
                 if not found:
-                    print("   ⚠️ Không tìm thấy đuôi chính xác, chọn mặc định cái đầu tiên.")
+                    print("   ⚠️ Exact domain not found, selecting default first option.")
                     select.select_by_index(0)
             else:
-                # Không thấy select chưa chắc đã chết, cứ thử tiếp
-                print("⚠️ Không tìm thấy dropdown select.")
+                # Missing select might not be fatal, try continuing
+                print("⚠️ Dropdown select not found.")
 
-            # 3. NHẤN NÚT ADD
-            print("-> Nhấn nút Hinzufügen...")
+            # 3. CLICK ADD BUTTON
+            print("-> Clicking Add Button...")
             if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-webdriver='button']", click=True):
-                 raise Exception("Không tìm thấy nút Add.")
+                 raise Exception("Add Button not found.")
 
-            # 4. CHECK KẾT QUẢ
-            print("-> Đang kiểm tra kết quả...")
-            time.sleep(3) # Chờ server phản hồi
-            
-            page_source = driver.page_source
-            
-            # Case Success
-            if "erfolgreich" in page_source or "theme-icon-confirm" in page_source:
-                print(f"✅ [PASS] SUCCESS: Đã thêm thành công {uid}{domain_full}")
+            # 4. CHECK RESULT
+            print("-> Checking result...")
+            time.sleep(3) # Wait for server response
+
+            def _has_icon(selector):
+                try:
+                    return len(driver.find_elements(By.CSS_SELECTOR, selector)) > 0
+                except Exception:
+                    return False
+
+            result = None
+            end_time = time.time() + 6
+            while time.time() < end_time:
+                page_source = driver.page_source
+                page_lower = page_source.lower()
+
+                warn_icon = _has_icon(".theme-icon-warn")
+                ok_icon = _has_icon(".theme-icon-confirm")
+
+                if warn_icon or "theme-icon-warn" in page_lower or "nicht verf" in page_lower:
+                    result = "EXIST"
+                    break
+
+                if ok_icon or "theme-icon-confirm" in page_lower or "erfolgreich" in page_lower:
+                    result = "SUCCESS"
+                    break
+
+                time.sleep(0.5)
+
+            if result == "SUCCESS":
+                print(f"? [PASS] SUCCESS: Successfully added {uid}{domain_full}")
                 return "SUCCESS"
-                
-            # Case Fail: "nicht verfügbar"
-            elif "nicht verfügbar" in page_source or "theme-icon-warn" in page_source:
-                print(f"⚠️ [PASS] EXIST: Mail {uid}{domain_full} đã được sử dụng.")
-                return "EXIST"
-            
-            # Fallback
-            if uid in page_source:
-                 print(f"✅ [PASS] SUCCESS: Tìm thấy mail trong bảng.")
-                 return "SUCCESS"
 
-            print(f"❓ [WARN] UNKNOWN: Không xác định được trạng thái (Attempt {attempt}).")
+            if result == "EXIST":
+                print(f"?? [PASS] EXIST: Mail {uid}{domain_full} is already used.")
+                return "EXIST"
+
+            print(f"? [WARN] UNKNOWN: Cannot determine status (Attempt {attempt}).")
             # Không return, để loop chạy lại
 
         except Exception as e:
