@@ -12,7 +12,7 @@ from queue import Queue
 # hoặc import nguyên logic xử lý.
 # Để đơn giản và an toàn, ta sẽ import hàm xử lý 1 account từ main.py
 try:
-    from main import process_single_account
+    from main import process_single_account, load_backup_uids, backup_uids_queue
 except ImportError as e:
     # Yêu cầu CHẠY THẬT: Nếu không thấy main.py thì báo lỗi và thoát
     # Không dùng Mock data nữa
@@ -70,34 +70,70 @@ class GmxToolApp:
         ttk.Button(top_frame, text="Xóa Dòng Chọn", command=self.delete_selected_rows).grid(row=1, column=3, padx=5)
         ttk.Button(top_frame, text="Xóa Tất Cả", command=self.clear_table).grid(row=1, column=4, padx=5)
 
-        # 2. Middle Frame: Table Data
+        # 2. Middle Frame: Notebook (Tabs)
         mid_frame = ttk.Frame(self.root, padding=5)
         mid_frame.pack(fill="both", expand=True, padx=10)
 
-        # Scrollbar
-        scroll_y = ttk.Scrollbar(mid_frame, orient="vertical")
-        scroll_y.pack(side="right", fill="y")
-        
-        scroll_x = ttk.Scrollbar(mid_frame, orient="horizontal")
-        scroll_x.pack(side="bottom", fill="x")
+        self.notebook = ttk.Notebook(mid_frame)
+        self.notebook.pack(fill="both", expand=True)
 
-        # Treeview
-        self.tree = ttk.Treeview(mid_frame, columns=COL_KEYS, show="headings", 
-                                 yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        # TAB 1: DANH SÁCH CHÍNH
+        self.tab_main = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_main, text="Danh sách Tài khoản")
         
-        scroll_y.config(command=self.tree.yview)
-        scroll_x.config(command=self.tree.xview)
+        # Scrollbar Tab 1
+        scroll_y_main = ttk.Scrollbar(self.tab_main, orient="vertical")
+        scroll_y_main.pack(side="right", fill="y")
+        scroll_x_main = ttk.Scrollbar(self.tab_main, orient="horizontal")
+        scroll_x_main.pack(side="bottom", fill="x")
 
-        # Define Columns
+        # Treeview Tab 1
+        self.tree = ttk.Treeview(self.tab_main, columns=COL_KEYS, show="headings", 
+                                 yscrollcommand=scroll_y_main.set, xscrollcommand=scroll_x_main.set)
+        
+        scroll_y_main.config(command=self.tree.yview)
+        scroll_x_main.config(command=self.tree.xview)
+
+        # Define Columns Main
         for i, col_name in enumerate(COLS):
             key = COL_KEYS[i]
             self.tree.heading(key, text=col_name)
             width = 100 if key != "email_full_new" else 150
             if key == "status": width = 150
             self.tree.column(key, width=width)
-            
         self.tree.pack(fill="both", expand=True)
+
+        # TAB 2: BACKUP UID
+        self.tab_backup = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_backup, text="Backup UID (Retry)")
         
+        # Controls Backup
+        bak_ctrl_frame = ttk.Frame(self.tab_backup, padding=5)
+        bak_ctrl_frame.pack(fill="x")
+        ttk.Button(bak_ctrl_frame, text="Load Backup File", command=self.load_backup_data).pack(side="left", padx=5)
+        ttk.Button(bak_ctrl_frame, text="Save Backup File", command=self.save_backup_data).pack(side="left", padx=5)
+        ttk.Button(bak_ctrl_frame, text="Clear Backup", command=self.clear_backup_table).pack(side="left", padx=5)
+        ttk.Button(bak_ctrl_frame, text="Nhập Backup Thủ Công", command=self.manual_backup_input).pack(side="left", padx=5)
+
+        # Treeview Backup
+        scroll_y_bak = ttk.Scrollbar(self.tab_backup, orient="vertical")
+        scroll_y_bak.pack(side="right", fill="y")
+        
+        bak_cols = ["UID", "EMAIL", "NOTE"]
+        self.tree_backup = ttk.Treeview(self.tab_backup, columns=bak_cols, show="headings", yscrollcommand=scroll_y_bak.set)
+        scroll_y_bak.config(command=self.tree_backup.yview)
+        
+        self.tree_backup.heading("UID", text="UID Backup")
+        self.tree_backup.heading("EMAIL", text="Email Full")
+        self.tree_backup.heading("NOTE", text="Note")
+        self.tree_backup.column("UID", width=150)
+        self.tree_backup.column("EMAIL", width=250)
+        self.tree_backup.column("NOTE", width=150)
+        self.tree_backup.pack(fill="both", expand=True)
+
+        # load default backup if exists
+        self.root.after(500, self.load_backup_data)
+
         # Context Menu cho Table (Click chuột phải)
         self.context_menu = tk.Menu(self.tree, tearoff=0)
         self.context_menu.add_command(label="Xóa dòng chọn", command=self.delete_selected_rows)
@@ -236,6 +272,62 @@ class GmxToolApp:
         self.lbl_progress.config(text=f"Progress: {self.completed_tasks}/{self.total_tasks}")
         self.lbl_success.config(text=f"Success: {self.success_count}")
 
+    # --- BACKUP UTILS ---
+    def load_backup_data(self):
+        # Default path
+        path = "backup_uids.txt"
+        if not os.path.exists(path): return
+
+        # Clear old
+        self.clear_backup_table()
+        
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            for line in lines:
+                line = line.strip()
+                if not line: continue
+                parts = line.split('\t')
+                if len(parts) < 2: parts = line.split() # attempt space split
+                
+                uid = parts[0] if len(parts)>0 else ""
+                mail = parts[1] if len(parts)>1 else ""
+                note = "Ready"
+                self.tree_backup.insert("", "end", values=(uid, mail, note))
+        except Exception as e:
+            # Silent fail or log
+            print(f"Load backup error: {e}")
+
+    def save_backup_data(self):
+        path = "backup_uids.txt"
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                for item in self.tree_backup.get_children():
+                    vals = self.tree_backup.item(item, "values")
+                    # Save format: UID \t MAIL
+                    line = f"{vals[0]}\t{vals[1]}"
+                    f.write(line + "\n")
+            messagebox.showinfo("Backup", "Đã lưu danh sách backup!")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def clear_backup_table(self):
+        for item in self.tree_backup.get_children():
+            self.tree_backup.delete(item)
+
+    def manual_backup_input(self):
+        inp = simpledialog.askstring("Nhập Backup", "Dán danh sách backup (UID [tab] MAIL):")
+        if inp:
+            lines = inp.strip().split("\n")
+            for line in lines:
+                parts = line.split('\t')
+                if len(parts)<2: parts = line.split()
+                if len(parts)>=1:
+                    uid = parts[0]
+                    mail = parts[1] if len(parts)>1 else ""
+                    self.tree_backup.insert("", "end", values=(uid, mail, "Ready"))
+            self.save_backup_data() # Auto save
+
     def update_row_status(self, item_id, status, error_msg=""):
         current_values = list(self.tree.item(item_id, "values"))
         msg = status
@@ -324,6 +416,17 @@ class GmxToolApp:
             self.status_var.set("Hoàn tất (Skip all)")
             messagebox.showinfo("Info", "Tất cả các dòng đều đã là SUCCESS_ADDED.\nKhông có gì để chạy!")
             return
+
+        # Ensure backup queue is populated from file before starting
+        # Since main.py logic reads from file, we ensure file is saved first
+        self.save_backup_data() 
+        # Then trigger reload in main logic (accessing module level function)
+        # We need to access the queue directly or call load function.
+        # Since logic in main.backup_uids_queue persists in memory if module loaded, 
+        # we should clear it and reload to be safe.
+        with backup_uids_queue.mutex:
+            backup_uids_queue.queue.clear()
+        load_backup_uids()
 
         # Start Worker Threads
         num_threads = self.thread_count_var.get()

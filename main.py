@@ -17,6 +17,7 @@ from test_step4_add import step_4_add_alias
 # --- CẤU HÌNH ---
 INPUT_FILE = "input.txt"
 OUTPUT_FILE = "output.txt"
+BACKUP_UI_FILE = "backup_uids.txt" # New config
 MAX_THREADS = 2  # Số luồng chạy song song (Tăng lên nếu máy mạnh, cẩn thận IP)
 
 # Patch lỗi WinError 6 khó chịu của undetected_chromedriver
@@ -29,6 +30,7 @@ uc.Chrome.__del__ = _del_patch
 print_lock = threading.Lock()
 # Lock để đồng bộ hóa việc khởi tạo driver (tránh lỗi WinError 183 khi patch file)
 driver_init_lock = threading.Lock()
+backup_uids_queue = queue.Queue() # Queue uid du phong
 
 def log_safe(msg, type="INFO"):
     """In log thread-safe để tránh bị đè chữ khi chạy nhiều luồng"""
@@ -40,6 +42,36 @@ def log_safe(msg, type="INFO"):
     
     with print_lock:
         print(f"{prefix} {msg}")
+
+def load_backup_uids():
+    """Load backup UIDs into a queue"""
+    if not backup_uids_queue.empty(): return
+    try:
+        with open(BACKUP_UI_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                
+                # Parse: UID [tab] MAIL ...
+                parts = line.split('\t')
+                if len(parts) < 2: parts = line.split() # Fallback space
+                
+                uid = parts[0].strip()
+                if uid: backup_uids_queue.put(uid)
+                
+        count = backup_uids_queue.qsize()
+        if count: log_safe(f"Đã load {count} UID dự phòng từ {BACKUP_UI_FILE}")
+    except FileNotFoundError:
+        log_safe(f"Không tìm thấy file {BACKUP_UI_FILE}. Tính năng retry UID sẽ tắt.", "WARN")
+    except Exception as e:
+        log_safe(f"Lỗi đọc backup UIDs: {e}", "ERROR")
+
+def get_backup_uid():
+    """Get a backup UID safely"""
+    try:
+        return backup_uids_queue.get_nowait()
+    except queue.Empty:
+        return None
 
 def save_output_safe(result_line):
     """Ghi file thread-safe"""
@@ -130,20 +162,64 @@ def process_single_account(task):
         # 4. Clean (Xóa mail cũ)
         step_3_cleanup(driver, user)
 
-        # 5. Add New Alias
+        # 5. Add New Alias (Modified Logic for Backup UIDs)
         domain_part = "@" + task['email_full_new'].split('@')[-1]
-        status = step_4_add_alias(driver, task['uid_new'], domain_part)
+        
+        status = "UNKNOWN"
+        used_uid = task['uid_new']
+        orig_uid = task['uid_new']
+
+        # Retry Loop: 0 (Original) -> 1, 2, 3 (Backups)
+        for i in range(4):
+            if i > 0:
+                # Tìm backup từ kho
+                backup = get_backup_uid()
+                if not backup:
+                    log_safe(f"[{user}] Hết UID dự phòng. Dừng retry.", "WARN")
+                    status = "EXIST" # Keep allow fail
+                    break
+                
+                log_safe(f"[{user}] ALREADY_EXIST -> Retry với UID dự phòng: {backup}", "WARN")
+                used_uid = backup
+                
+                # Refresh trang để clear form
+                driver.refresh()
+                # Có thể thêm step navigation lại cho chắc chắn
+                step_2_navigate(driver)
+
+            # Thực hiện Add
+            status = step_4_add_alias(driver, used_uid, domain_part)
+            
+            if status == "SUCCESS":
+                break # Thành công -> Thoát
+            elif status == "EXIST":
+                # Nếu bị trùng -> Tiếp tục loop để lấy backup khác
+                continue
+            else:
+                # Nếu lỗi ERROR khác (không phải trùng), có thể do mạng hoặc lỗi site -> break luôn
+                break
         
         # 6. Logout / Cleanup session (Quan trọng khi chạy multithread)
         try: driver.delete_all_cookies()
         except: pass
 
+        # Update Output Line if UID Changed
+        final_line = task['raw_line']
+        if status == "SUCCESS" and used_uid != orig_uid:
+            # Replace UID in the output string
+            parts = final_line.split('\t')
+            if len(parts) >= 2:
+                parts[0] = used_uid
+                parts[1] = used_uid + domain_part
+                final_line = "\t".join(parts)
+            log_safe(f"[{user}] Đã đổi UID gốc {orig_uid} -> {used_uid}", "SUCCESS")
+
         if status == "SUCCESS":
-            return f"{task['raw_line']}\tSUCCESS_ADDED"
+            return f"{final_line}\tSUCCESS_ADDED"
         elif status == "EXIST":
-            return f"{task['raw_line']}\tALREADY_EXIST"
+            return f"{final_line}\tALREADY_EXIST"
         else:
-            return f"{task['raw_line']}\tADD_ERROR"
+            return f"{final_line}\tADD_ERROR"
 
     except Exception as e:
         log_safe(f"Crash {user}: {e}", "ERROR")
@@ -156,6 +232,9 @@ def process_single_account(task):
             
 def main():
     log_safe(f"TOOL ADD ALIAS GMX - MULTI THREAD ({MAX_THREADS})")
+    
+    # 0. Load Backup UIDs
+    load_backup_uids()
     
     # 1. Đọc dữ liệu
     tasks = read_input(INPUT_FILE)
