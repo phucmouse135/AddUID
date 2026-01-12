@@ -58,6 +58,8 @@ def find_element_safe(driver, by, value, timeout=TIMEOUT_MAX, click=False, send_
     """
     end_time = time.time() + timeout
     while time.time() < end_time:
+        if reload_if_ad_popup(driver):
+            return None
         try:
             element = driver.find_element(by, value)
             
@@ -80,3 +82,62 @@ def find_element_safe(driver, by, value, timeout=TIMEOUT_MAX, click=False, send_
     
     print(f"[ERROR] Không tìm thấy hoặc không thao tác được: {value}")
     return None
+
+def reload_if_ad_popup(driver, url="https://www.gmx.net/"):
+    """Reload to GMX home if ad-consent popup is shown."""
+    try:
+        try:
+            current_url = driver.current_url
+        except Exception:
+            current_url = ""
+
+        if current_url.startswith("https://suche.gmx.net/web"):
+            driver.get(url)
+            time.sleep(2)
+            return True
+
+        for element in driver.find_elements(By.CSS_SELECTOR, "span.title"):
+            try:
+                text = element.text.strip()
+            except Exception:
+                text = ""
+            if "Wir finanzieren uns" in text:
+                driver.get(url)
+                time.sleep(2)
+                return True
+
+        for button in driver.find_elements(By.TAG_NAME, "button"):
+            try:
+                text = button.text.strip()
+            except Exception:
+                text = ""
+            if text in ("Akzeptieren und weiter", "Zum Abo ohne Fremdwerbung"):
+                driver.get(url)
+                time.sleep(2)
+                return True
+
+        try:
+            page_source = driver.page_source
+        except Exception:
+            page_source = ""
+
+        page_lower = page_source.lower()
+        if "wir finanzieren uns" in page_lower:
+            popup_hints = [
+                "werbung",
+                "akzeptieren und weiter",
+                "zum abo ohne fremdwerbung",
+                "postfach ohne fremdwerbebanner",
+                "abfrage nochmals anzeigen",
+            ]
+            if any(hint in page_lower for hint in popup_hints):
+                driver.get(url)
+                time.sleep(2)
+                return True
+        elif "wir finanzieren uns" in page_source and "Werbung" in page_source:
+            driver.get(url)
+            time.sleep(2)
+            return True
+    except Exception:
+        pass
+    return False

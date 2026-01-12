@@ -1,7 +1,7 @@
 # FILE: test_step2_nav.py
 import time
 from selenium.webdriver.common.by import By
-from gmx_core import get_driver, find_element_safe
+from gmx_core import get_driver, find_element_safe, reload_if_ad_popup
 from step1_login import login_process
 
 # --- DATA TEST ---
@@ -11,6 +11,10 @@ PASS = "muledok5P"
 def step_2_navigate(driver):
     print("\n--- START TEST STEP 2: NAVIGATE SETTINGS ---")
     try:
+        if reload_if_ad_popup(driver):
+            print("?? Ad popup detected. Reloaded to GMX home.")
+            return False
+
         # 1. Trick Change URL: mail -> mail_settings
         current_url = driver.current_url
         print(f"-> Current URL: {current_url}")
@@ -21,6 +25,10 @@ def step_2_navigate(driver):
             time.sleep(3) # Wait for page settings to load completely
         else:
             print("⚠️ URL does not contain 'mail?', trying to find menu manually.")
+
+        if reload_if_ad_popup(driver):
+            print("?? Ad popup detected. Reloaded to GMX home.")
+            return False
 
         # --- LOGIC FIND MENUS (COMPACT & SILENT) ---
         print("-> Scanning for 'E-Mail-Adressen' menu (suppress errors)...")
