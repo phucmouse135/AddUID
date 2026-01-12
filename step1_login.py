@@ -24,44 +24,100 @@ def login_process(driver, user, password):
         print("-> Check Consent...")
         find_element_safe(driver, By.ID, "onetrust-accept-btn-handler", timeout=5, click=True)
 
-        # 3. TÌM IFRAME THEO ĐƯỜNG DẪN BẠN CUNG CẤP
-        print("-> Đang tìm Iframe theo path...")
-        iframe_selector = "#app > div > div.main-content > div:nth-child(3) > section:nth-child(4) > div > iframe"
-        iframe_element = find_element_safe(driver, By.CSS_SELECTOR, iframe_selector)
+        # 3. LOGIC TÌM LOGIN FORM (AUTO-SCAN)
+        print("-> Đang quét tìm vị trí Login Form (Main hoặc Iframe)...")
         
-        if not iframe_element:
-            print("⚠️ Path chính xác không thấy, thử tìm iframe trong main-content...")
-            iframe_element = find_element_safe(driver, By.CSS_SELECTOR, ".main-content iframe")
+        # Danh sách selector tiềm năng cho username
+        user_selectors = [
+            (By.CSS_SELECTOR, "input[data-testid='input-email']"),
+            (By.NAME, "username"),
+            (By.ID, "username"), 
+            (By.CSS_SELECTOR, "input[type='email']"),
+            (By.XPATH, "//input[@autocomplete='username']")
+        ]
 
-        if not iframe_element:
-            print("❌ Không tìm thấy Iframe Login.")
-            return False
+        found_input = False
+        
+        # 3.1. Kiểm tra ngay tại Main Content
+        for by_m, val_m in user_selectors:
+            if find_element_safe(driver, by_m, val_m, timeout=1):
+                print(f"✅ Tìm thấy Login Input ở Main Content ({val_m})")
+                found_input = True
+                break
+        
+        # 3.2. Nếu chưa thấy, quét từng Iframe
+        if not found_input:
+            print("   Không thấy ở Main, bắt đầu quét các Iframe...")
+            iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            print(f"   Tìm thấy {len(iframes)} iframes.")
+            
+            for index, iframe in enumerate(iframes):
+                try:
+                    driver.switch_to.default_content() # Reset về main trước khi switch cái mới
+                    driver.switch_to.frame(iframe)
+                    
+                    # Kiểm tra thử xem có input login không
+                    for by_f, val_f in user_selectors:
+                        # Chỉ check nhanh (timeout ngắn)
+                        elem = find_element_safe(driver, by_f, val_f, timeout=1)
+                        if elem:
+                            print(f"✅ Đã tìm thấy Login Input trong Iframe thứ {index+1}")
+                            found_input = True
+                            break
+                    
+                    if found_input: break # Đã tìm thấy đúng iframe, giữ nguyên context ở đây
+                    
+                except Exception:
+                    continue # Iframe lỗi hoặc chặn access, bỏ qua
+            
+            if not found_input:
+                # Nếu quét hết vẫn không thấy, thử lại fallback cũ (iframe main-content)
+                driver.switch_to.default_content()
+                print("⚠️ Quét thất bại. Thử fallback selector cũ...")
+                iframe_fallback = find_element_safe(driver, By.CSS_SELECTOR, ".main-content iframe")
+                if iframe_fallback:
+                    driver.switch_to.frame(iframe_fallback)
 
-        # 4. SWITCH VÀO IFRAME
-        driver.switch_to.frame(iframe_element)
-        print("   Đã Switch vào bên trong Iframe.")
+        # 5. ĐIỀN USERNAME (Context đã ở đúng chỗ sau luồng quét trên)
+        print("-> Thực hiện điền Username...")
+        # (Lặp lại logic điền an toàn)
+        filled = False
+        for by_u, val_u in user_selectors:
+            if find_element_safe(driver, by_u, val_u, send_keys=user):
+                filled = True
+                break
+                
+        if not filled:
+             print("❌ Vẫn không thể điền Username sau khi quét.")
+             return False
 
-        # 5. TÌM USERNAME
-        print("-> Đang điền Username...")
-        if not find_element_safe(driver, By.CSS_SELECTOR, "#login #username", send_keys=user):
-            if not find_element_safe(driver, By.NAME, "username", send_keys=user):
-                 print("❌ Không tìm thấy input #username.")
-                 return False
         print(f"   Đã nhập: {user}")
 
         # 6. CLICK NÚT WEITER
-        find_element_safe(driver, By.CSS_SELECTOR, "#login button[type='submit']", click=True)
-        print("-> Đã nhấn Weiter.")
+        print("-> Nhấn nút Weiter...")
+        # Priority: data-testid -> type=submit -> id
+        if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-testid='login-submit']", click=True):
+            if not find_element_safe(driver, By.CSS_SELECTOR, "button[type='submit']", click=True):
+                 if not find_element_safe(driver, By.ID, "login-submit", click=True):
+                     print("❌ Không tìm thấy nút Weiter.")
+                     # return False # Có thể thử tiếp, ko return vội
 
         # 7. TÌM PASSWORD
         print("-> Đang điền Password...")
-        if not find_element_safe(driver, By.CSS_SELECTOR, "#login #password", timeout=10, send_keys=password):
-             print("❌ Không tìm thấy input #password.")
-             return False
+        # Priority: data-testid -> id -> name -> xpath
+        if not find_element_safe(driver, By.CSS_SELECTOR, "input[data-testid='input-password']", timeout=10, send_keys=password):
+            if not find_element_safe(driver, By.ID, "password", send_keys=password):
+                if not find_element_safe(driver, By.NAME, "password", send_keys=password):
+                    # Fallback XPath chung
+                     if not find_element_safe(driver, By.XPATH, "//input[@type='password']", send_keys=password):
+                         print("❌ Không tìm thấy input #password.")
+                         return False
         print("   Đã nhập Password.")
 
         # 8. CLICK LOGIN LẦN CUỐI
-        find_element_safe(driver, By.CSS_SELECTOR, "#login button[type='submit']", click=True)
+        # Priority: data-testid -> type=submit
+        if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-testid='login-submit']", click=True):
+            find_element_safe(driver, By.CSS_SELECTOR, "button[type='submit']", click=True)
         print("-> Đã nhấn Login.")
 
         # 9. CHECK KẾT QUẢ
