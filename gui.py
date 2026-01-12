@@ -162,6 +162,7 @@ class GmxToolApp:
         ttk.Button(bot_frame, text="Export Failed", command=lambda: self.export_data(filter_mode="FAIL")).pack(side="right", padx=5)
         ttk.Button(bot_frame, text="Export Success", command=lambda: self.export_data(filter_mode="SUCCESS")).pack(side="right", padx=5)
         ttk.Button(bot_frame, text="Export All", command=lambda: self.export_data(filter_mode="ALL")).pack(side="right", padx=5)
+        ttk.Button(bot_frame, text="Export Changed UID", command=self.export_changed_uids).pack(side="right", padx=5)
 
         # Labels Stats
         self.lbl_progress = ttk.Label(bot_frame, text="Progress: 0/0")
@@ -374,7 +375,11 @@ class GmxToolApp:
             self.tree_backup.delete(item)
 
     def manual_backup_input(self):
-        inp = simpledialog.askstring("Input Backup", "Paste backup list (UID [tab] MAIL):")
+        help_text = "Format: UID[tab]MAIL"
+        inp = self._open_text_input_dialog(
+            "Manual Backup Input",
+            f"{help_text}\n\nPaste data here (one per line):"
+        )
         if inp:
             lines = inp.strip().split("\n")
             for line in lines:
@@ -386,8 +391,14 @@ class GmxToolApp:
                     self.tree_backup.insert("", "end", values=(uid, mail, "Ready"))
             self.save_backup_data() # Auto save
 
-    def update_row_status(self, item_id, status, error_msg=""):
-        current_values = list(self.tree.item(item_id, "values"))
+    def update_row_status(self, item_id, status, error_msg="", new_values=None):
+        if new_values is not None:
+            current_values = list(new_values)
+        else:
+            current_values = list(self.tree.item(item_id, "values"))
+
+        if len(current_values) < len(COL_KEYS):
+            current_values.extend([""] * (len(COL_KEYS) - len(current_values)))
         msg = status
         if error_msg: msg += f" ({error_msg})"
         current_values[-1] = msg # Note column at end
@@ -535,8 +546,10 @@ class GmxToolApp:
                     
                     try:
                         res_raw = future.result()
-                        status = res_raw.split('\t')[-1]
-                        self.root.after(0, self.update_row_status, task['item_id'], status)
+                        parts = res_raw.split('\t')
+                        status = parts[-1] if parts else "UNKNOWN"
+                        new_values = parts[:len(COL_KEYS)] if len(parts) >= len(COL_KEYS) else None
+                        self.root.after(0, self.update_row_status, task['item_id'], status, "", new_values)
                     except Exception as e:
                         msg = str(e)
                         self.root.after(0, self.update_row_status, task['item_id'], "ERROR", msg)
@@ -583,6 +596,37 @@ class GmxToolApp:
                     count += 1
             
             messagebox.showinfo("Export", f"Exported {count} lines ({filter_mode})!")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def export_changed_uids(self):
+        filename = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text Files", "*.txt")])
+        if not filename:
+            return
+
+        try:
+            count = 0
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write("OLD_UID\tNEW_UID\n")
+                for item_id in self.tree.get_children():
+                    vals = self.tree.item(item_id, "values")
+                    if not vals:
+                        continue
+                    status = vals[-1]
+                    if "SUCCESS_ADDED" not in status or "->" not in status:
+                        continue
+                    suffix = status.split("SUCCESS_ADDED", 1)[1].strip()
+                    if "->" not in suffix:
+                        continue
+                    old_uid, new_uid = suffix.split("->", 1)
+                    old_uid = old_uid.strip()
+                    new_uid = new_uid.strip()
+                    if not old_uid or not new_uid:
+                        continue
+                    f.write(f"{old_uid}\t{new_uid}\n")
+                    count += 1
+
+            messagebox.showinfo("Export", f"Exported {count} changed UIDs.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
