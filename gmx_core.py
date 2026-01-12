@@ -84,6 +84,16 @@ def find_element_safe(driver, by, value, timeout=TIMEOUT_MAX, click=False, send_
 def reload_if_ad_popup(driver, url="https://www.gmx.net/"):
     """Reload to GMX home if ad-consent popup is shown."""
     try:
+        try:
+            current_url = driver.current_url
+        except Exception:
+            current_url = ""
+
+        if current_url == "https://suche.gmx.net/web?origin=HP":
+            driver.get(url)
+            time.sleep(2)
+            return True
+
         for element in driver.find_elements(By.CSS_SELECTOR, "span.title"):
             try:
                 text = element.text.strip()

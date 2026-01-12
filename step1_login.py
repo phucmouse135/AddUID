@@ -1,7 +1,7 @@
 # FILE: step1_login.py
 import time
 from selenium.webdriver.common.by import By
-from gmx_core import get_driver, find_element_safe
+from gmx_core import get_driver, find_element_safe, reload_if_ad_popup
 
 # --- DATA TEST DEFAULT ---
 DEF_USER = "saucycut1@gmx.de"
@@ -20,6 +20,9 @@ def login_process(driver, user, password):
         time.sleep(3)
         driver.get("https://www.gmx.net/") # Reload
         
+        if reload_if_ad_popup(driver):
+            print("?? Ad popup detected. Reloaded to GMX home.")
+            return False
         # 2. Handle Consent
         print("-> Check Consent...")
         find_element_safe(driver, By.ID, "onetrust-accept-btn-handler", timeout=5, click=True)
@@ -50,6 +53,9 @@ def login_process(driver, user, password):
 
         fast_scan_interval = 0.2
 
+        if reload_if_ad_popup(driver):
+            print("?? Ad popup detected. Reloaded to GMX home.")
+            return False
         def fast_find_any(selectors):
             for by_f, val_f in selectors:
                 try:
