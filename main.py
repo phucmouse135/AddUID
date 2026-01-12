@@ -33,6 +33,8 @@ file_update_lock = threading.Lock()
 # Lock for driver init synchronization (avoid WinError 183 when patching file)
 driver_init_lock = threading.Lock()
 backup_uids_queue = queue.Queue() # Queue backup uid
+backup_uid_call_lock = threading.Lock()
+backup_uid_call_count = 0
 
 def log_safe(msg, type="INFO"):
     """Thread-safe log printing to avoid mixed text"""
@@ -47,6 +49,7 @@ def log_safe(msg, type="INFO"):
 
 def load_backup_uids():
     """Load backup UIDs into a queue"""
+    global backup_uid_call_count
     if not backup_uids_queue.empty(): return
     try:
         with open(BACKUP_UI_FILE, "r", encoding="utf-8") as f:
@@ -60,7 +63,10 @@ def load_backup_uids():
                 
                 uid = parts[0].strip()
                 if uid: backup_uids_queue.put(uid)
-                
+
+        with backup_uid_call_lock:
+            backup_uid_call_count = 0
+
         count = backup_uids_queue.qsize()
         if count: log_safe(f"Loaded {count} backup UIDs from {BACKUP_UI_FILE}")
     except FileNotFoundError:
@@ -99,9 +105,12 @@ def _remove_backup_uid_from_file(uid):
 
 def get_backup_uid():
     """Get a backup UID safely"""
+    global backup_uid_call_count
     try:
         uid = backup_uids_queue.get_nowait()
         _remove_backup_uid_from_file(uid)
+        with backup_uid_call_lock:
+            backup_uid_call_count += 1
         return uid
     except queue.Empty:
         return None
@@ -322,7 +331,10 @@ def process_single_account(task):
             log_safe(f"[{user}] Swapped original UID {orig_uid} -> {used_uid}", "SUCCESS")
 
         if status == "SUCCESS":
-            return f"{final_line}\tSUCCESS_ADDED"
+            success_note = "SUCCESS_ADDED"
+            if used_uid != orig_uid:
+                success_note = f"SUCCESS_ADDED {orig_uid} -> {used_uid}"
+            return f"{final_line}\t{success_note}"
         elif status == "EXIST":
             return f"{final_line}\tALREADY_EXIST"
         else:

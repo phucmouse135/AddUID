@@ -2,7 +2,7 @@
 import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
-from gmx_core import get_driver, find_element_safe
+from gmx_core import get_driver, find_element_safe, reload_if_ad_popup
 from step1_login import login_process
 from test_step2_nav import step_2_navigate
 
@@ -17,6 +17,10 @@ def step_4_add_alias(driver, uid, domain_full):
     
     # Retry Loop: 3 Times
     for attempt in range(1, 4):
+        if reload_if_ad_popup(driver):
+            print("?? Ad popup detected. Reloaded to GMX home.")
+            return "ERROR"
+
         try:
             if attempt > 1:
                 print(f"🔄 [RETRY] Attempt {attempt}/3: Refreshing page...")

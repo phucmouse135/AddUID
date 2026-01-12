@@ -2,7 +2,7 @@
 import time
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
-from gmx_core import get_driver, find_element_safe
+from gmx_core import get_driver, find_element_safe, reload_if_ad_popup
 from step1_login import login_process
 from test_step2_nav import step_2_navigate
 
@@ -14,8 +14,16 @@ def step_3_cleanup(driver, original_email):
     action = ActionChains(driver)
     
     try:
+        if reload_if_ad_popup(driver):
+            print("?? Ad popup detected. Reloaded to GMX home.")
+            return
+
         # Loop "Scan -> Delete -> Re-scan" to avoid DOM errors
         while True:
+            if reload_if_ad_popup(driver):
+                print("?? Ad popup detected. Reloaded to GMX home.")
+                return
+
             time.sleep(2) # Wait for table stability
             
             # Find all rows in table

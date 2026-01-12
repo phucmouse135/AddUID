@@ -105,6 +105,8 @@ class GmxToolApp:
             if key == "status": width = 150
             self.tree.column(key, width=width)
         self.tree.pack(fill="both", expand=True)
+        self.tree.tag_configure("success", background="#d7f5d7")
+        self.tree.tag_configure("error", background="#f5d7d7")
 
         # TAB 2: BACKUP UID
         self.tab_backup = ttk.Frame(self.notebook)
@@ -115,6 +117,7 @@ class GmxToolApp:
         bak_ctrl_frame.pack(fill="x")
         ttk.Button(bak_ctrl_frame, text="Load Backup File", command=self.load_backup_data).pack(side="left", padx=5)
         ttk.Button(bak_ctrl_frame, text="Save Backup File", command=self.save_backup_data).pack(side="left", padx=5)
+        ttk.Button(bak_ctrl_frame, text="Export Backup", command=self.export_backup_data).pack(side="left", padx=5)
         ttk.Button(bak_ctrl_frame, text="Clear Backup", command=self.clear_backup_table).pack(side="left", padx=5)
         ttk.Button(bak_ctrl_frame, text="Manual Backup Input", command=self.manual_backup_input).pack(side="left", padx=5)
 
@@ -223,9 +226,56 @@ class GmxToolApp:
         except Exception as e:
             messagebox.showerror("Read Error", str(e))
 
+    def _open_text_input_dialog(self, title, help_text):
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.geometry("900x420")
+        dialog.minsize(700, 300)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(1, weight=1)
+
+        label = ttk.Label(dialog, text=help_text, justify="left", wraplength=860)
+        label.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+
+        text_frame = ttk.Frame(dialog)
+        text_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+
+        text = tk.Text(text_frame, wrap="none", font=("Segoe UI", 11))
+        scroll_y = ttk.Scrollbar(text_frame, orient="vertical", command=text.yview)
+        scroll_x = ttk.Scrollbar(text_frame, orient="horizontal", command=text.xview)
+        text.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        text.pack(side="left", fill="both", expand=True)
+        scroll_y.pack(side="right", fill="y")
+        scroll_x.pack(side="bottom", fill="x")
+        text.focus_set()
+
+        result = {"value": None}
+
+        def on_ok():
+            value = text.get("1.0", "end").strip()
+            if value:
+                result["value"] = value
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=10)
+        ttk.Button(btn_frame, text="OK", command=on_ok).pack(side="right", padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="right")
+
+        dialog.bind("<Escape>", lambda event: on_cancel())
+        dialog.bind("<Control-Return>", lambda event: on_ok())
+
+        self.root.wait_window(dialog)
+        return result["value"]
+
     def manual_input_dialog(self):
         help_text = "Format: UID[tab]MAIL_LK[tab]USER[tab]PASS[tab]2FA[tab]ORIG_MAIL[tab]PASS_MAIL[tab]RECOVERY_MAIL"
-        inp = simpledialog.askstring("Manual Input", f"{help_text}\n\nPaste data here (one per line):")
+        inp = self._open_text_input_dialog("Manual Input", f"{help_text}\n\nPaste data here (one per line):")
         if inp:
             lines = inp.strip().split("\n")
             for line in lines:
@@ -296,6 +346,26 @@ class GmxToolApp:
                     line = f"{vals[0]}\t{vals[1]}"
                     f.write(line + "\n")
             messagebox.showinfo("Backup", "Backup list saved!")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def export_backup_data(self):
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
+        )
+        if not filename:
+            return
+
+        try:
+            count = 0
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write("UID\tEMAIL\tNOTE\n")
+                for item in self.tree_backup.get_children():
+                    uid, mail, note = self.tree_backup.item(item, "values")
+                    f.write(f"{uid}\t{mail}\t{note}\n")
+                    count += 1
+            messagebox.showinfo("Export", f"Exported {count} backup items.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 

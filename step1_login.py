@@ -17,107 +17,191 @@ def login_process(driver, user, password):
         
         # 1. Enter site
         driver.get("https://www.gmx.net/")
-        time.sleep(2)
+        time.sleep(3)
         driver.get("https://www.gmx.net/") # Reload
         
         # 2. Handle Consent
         print("-> Check Consent...")
         find_element_safe(driver, By.ID, "onetrust-accept-btn-handler", timeout=5, click=True)
 
-        # 3. LOGIC FIND LOGIN FORM (AUTO-SCAN)
+        # 3. LOGIC FIND LOGIN FORM (FAST-SCAN MAIN/IFRAME)
         print("-> Scanning for Login Form (Main or Iframe)...")
-        
-        # List of potential selectors for username
+
         user_selectors = [
             (By.CSS_SELECTOR, "input[data-testid='input-email']"),
             (By.NAME, "username"),
-            (By.ID, "username"), 
+            (By.ID, "username"),
             (By.CSS_SELECTOR, "input[type='email']"),
             (By.XPATH, "//input[@autocomplete='username']")
         ]
 
-        found_input = False
-        
-        # 3.1. Check Main Content
-        for by_m, val_m in user_selectors:
-            if find_element_safe(driver, by_m, val_m, timeout=1):
-                print(f"✅ Found Login Input in Main Content ({val_m})")
-                found_input = True
-                break
-        
-        # 3.2. If not found, scan Iframes
-        if not found_input:
-            print("   Not found in Main, scanning Iframes...")
-            iframes = driver.find_elements(By.TAG_NAME, "iframe")
-            print(f"   Found {len(iframes)} iframes.")
-            
-            for index, iframe in enumerate(iframes):
+        button_selectors = [
+            (By.CSS_SELECTOR, "button[data-testid='login-submit']"),
+            (By.CSS_SELECTOR, "button[type='submit']"),
+            (By.ID, "login-submit")
+        ]
+
+        password_selectors = [
+            (By.CSS_SELECTOR, "input[data-testid='input-password']"),
+            (By.ID, "password"),
+            (By.NAME, "password"),
+            (By.XPATH, "//input[@type='password']")
+        ]
+
+        fast_scan_interval = 0.2
+
+        def fast_find_any(selectors):
+            for by_f, val_f in selectors:
                 try:
-                    driver.switch_to.default_content() # Reset to main before switch
-                    driver.switch_to.frame(iframe)
-                    
-                    # Check for login input
-                    for by_f, val_f in user_selectors:
-                        # Quick check (short timeout)
-                        elem = find_element_safe(driver, by_f, val_f, timeout=1)
-                        if elem:
-                            print(f"✅ Found Login Input in Iframe #{index+1}")
-                            found_input = True
-                            break
-                    
-                    if found_input: break # Found correct iframe, stay in this context
-                    
+                    elements = driver.find_elements(by_f, val_f)
                 except Exception:
-                    continue # Iframe error or blocked, skip
-            
-            if not found_input:
-                # If scan fails, try old fallback (main-content iframe)
+                    elements = []
+                if elements:
+                    return elements[0], (by_f, val_f)
+            return None, None
+
+        def fast_locate_in_frames(selectors, timeout=6, prefer_iframe_index=None):
+            end_time = time.time() + timeout
+            while time.time() < end_time:
+                if prefer_iframe_index is not None:
+                    try:
+                        driver.switch_to.default_content()
+                        iframes = driver.find_elements(By.TAG_NAME, "iframe")
+                        if prefer_iframe_index < len(iframes):
+                            driver.switch_to.frame(iframes[prefer_iframe_index])
+                            element, _ = fast_find_any(selectors)
+                            if element:
+                                return prefer_iframe_index, element
+                    except Exception:
+                        pass
+
+                try:
+                    driver.switch_to.default_content()
+                except Exception:
+                    pass
+
+                element, _ = fast_find_any(selectors)
+                if element:
+                    return None, element
+
+                try:
+                    iframes = driver.find_elements(By.TAG_NAME, "iframe")
+                except Exception:
+                    iframes = []
+
+                for idx, iframe in enumerate(iframes):
+                    try:
+                        driver.switch_to.default_content()
+                        driver.switch_to.frame(iframe)
+                        element, _ = fast_find_any(selectors)
+                        if element:
+                            return idx, element
+                    except Exception:
+                        continue
+
+                time.sleep(fast_scan_interval)
+
+            try:
                 driver.switch_to.default_content()
-                print("⚠️ Scan failed. Trying fallback selector...")
-                iframe_fallback = find_element_safe(driver, By.CSS_SELECTOR, ".main-content iframe")
-                if iframe_fallback:
-                    driver.switch_to.frame(iframe_fallback)
+            except Exception:
+                pass
+            return None, None
+
+        def click_element(element):
+            try:
+                element.click()
+                return True
+            except Exception:
+                try:
+                    driver.execute_script("arguments[0].click();", element)
+                    return True
+                except Exception:
+                    return False
+
+        def type_into_element(element, text):
+            try:
+                element.clear()
+            except Exception:
+                pass
+            try:
+                element.send_keys(text)
+                return True
+            except Exception:
+                try:
+                    driver.execute_script("arguments[0].value = arguments[1];", element, text)
+                    driver.execute_script(
+                        "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));",
+                        element
+                    )
+                    return True
+                except Exception:
+                    return False
+
+        current_iframe_index, user_input = fast_locate_in_frames(user_selectors, timeout=8)
+        if user_input:
+            location = "Main Content" if current_iframe_index is None else f"Iframe #{current_iframe_index + 1}"
+            print(f"   Found Login Input in {location} (fast scan)")
+        else:
+            print("? Login input not found in main/iframes.")
+            return False
 
         # 5. ENTER USERNAME (Context is correct after scan)
         print("-> Entering Username...")
-        # (Retry safe fill logic)
-        filled = False
-        for by_u, val_u in user_selectors:
-            if find_element_safe(driver, by_u, val_u, send_keys=user):
-                filled = True
-                break
-                
+        filled = type_into_element(user_input, user)
         if not filled:
-             print("❌ Still cannot enter Username after scan.")
-             return False
+            for by_u, val_u in user_selectors:
+                if find_element_safe(driver, by_u, val_u, send_keys=user):
+                    filled = True
+                    break
+
+        if not filled:
+            print("? Still cannot enter Username after scan.")
+            return False
 
         print(f"   Entered: {user}")
 
         # 6. CLICK NEXT/WEITER
         print("-> Clicking Next/Weiter...")
         # Priority: data-testid -> type=submit -> id
-        if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-testid='login-submit']", click=True):
-            if not find_element_safe(driver, By.CSS_SELECTOR, "button[type='submit']", click=True):
-                 if not find_element_safe(driver, By.ID, "login-submit", click=True):
-                     print("❌ Next button not found.")
-                     # return False # Try continuing
+        current_iframe_index, next_button = fast_locate_in_frames(
+            button_selectors,
+            timeout=4,
+            prefer_iframe_index=current_iframe_index
+        )
+        if not next_button or not click_element(next_button):
+            if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-testid='login-submit']", click=True):
+                if not find_element_safe(driver, By.CSS_SELECTOR, "button[type='submit']", click=True):
+                    if not find_element_safe(driver, By.ID, "login-submit", click=True):
+                        print("? Next button not found.")
+                        # return False # Try continuing
 
         # 7. ENTER PASSWORD
         print("-> Entering Password...")
         # Priority: data-testid -> id -> name -> xpath
-        if not find_element_safe(driver, By.CSS_SELECTOR, "input[data-testid='input-password']", timeout=10, send_keys=password):
-            if not find_element_safe(driver, By.ID, "password", send_keys=password):
-                if not find_element_safe(driver, By.NAME, "password", send_keys=password):
-                    # Fallback XPath
-                     if not find_element_safe(driver, By.XPATH, "//input[@type='password']", send_keys=password):
-                         print("❌ Password input not found.")
-                         return False
+        current_iframe_index, password_input = fast_locate_in_frames(
+            password_selectors,
+            timeout=10,
+            prefer_iframe_index=current_iframe_index
+        )
+        if not password_input or not type_into_element(password_input, password):
+            if not find_element_safe(driver, By.CSS_SELECTOR, "input[data-testid='input-password']", timeout=10, send_keys=password):
+                if not find_element_safe(driver, By.ID, "password", send_keys=password):
+                    if not find_element_safe(driver, By.NAME, "password", send_keys=password):
+                        if not find_element_safe(driver, By.XPATH, "//input[@type='password']", send_keys=password):
+                            print("? Password input not found.")
+                            return False
         print("   Password entered.")
 
         # 8. CLICK LOGIN FINAL
         # Priority: data-testid -> type=submit
-        if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-testid='login-submit']", click=True):
-            find_element_safe(driver, By.CSS_SELECTOR, "button[type='submit']", click=True)
+        current_iframe_index, login_button = fast_locate_in_frames(
+            button_selectors,
+            timeout=4,
+            prefer_iframe_index=current_iframe_index
+        )
+        if not login_button or not click_element(login_button):
+            if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-testid='login-submit']", click=True):
+                find_element_safe(driver, By.CSS_SELECTOR, "button[type='submit']", click=True)
         print("-> Clicked Login.")
 
         # 9. CHECK RESULT

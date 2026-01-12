@@ -80,3 +80,29 @@ def find_element_safe(driver, by, value, timeout=TIMEOUT_MAX, click=False, send_
     
     print(f"[ERROR] Không tìm thấy hoặc không thao tác được: {value}")
     return None
+
+def reload_if_ad_popup(driver, url="https://www.gmx.net/"):
+    """Reload to GMX home if ad-consent popup is shown."""
+    try:
+        for element in driver.find_elements(By.CSS_SELECTOR, "span.title"):
+            try:
+                text = element.text.strip()
+            except Exception:
+                text = ""
+            if "Wir finanzieren uns" in text:
+                driver.get(url)
+                time.sleep(2)
+                return True
+
+        try:
+            page_source = driver.page_source
+        except Exception:
+            page_source = ""
+
+        if "Wir finanzieren uns" in page_source and "Werbung" in page_source:
+            driver.get(url)
+            time.sleep(2)
+            return True
+    except Exception:
+        pass
+    return False
