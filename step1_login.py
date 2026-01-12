@@ -19,13 +19,21 @@ def login_process(driver, user, password):
         driver.get("https://www.gmx.net/")
         time.sleep(3)
         driver.get("https://www.gmx.net/") # Reload
-        
-        if reload_if_ad_popup(driver):
-            print("?? Ad popup detected. Reloaded to GMX home.")
+
+        def abort_if_ad_popup():
+            if reload_if_ad_popup(driver):
+                print("?? Ad popup detected. Reloaded to GMX home.")
+                return True
             return False
+
+        if abort_if_ad_popup():
+            return False
+        
         # 2. Handle Consent
         print("-> Check Consent...")
         find_element_safe(driver, By.ID, "onetrust-accept-btn-handler", timeout=5, click=True)
+        if abort_if_ad_popup():
+            return False
 
         # 3. LOGIC FIND LOGIN FORM (FAST-SCAN MAIN/IFRAME)
         print("-> Scanning for Login Form (Main or Iframe)...")
@@ -53,9 +61,9 @@ def login_process(driver, user, password):
 
         fast_scan_interval = 0.2
 
-        if reload_if_ad_popup(driver):
-            print("?? Ad popup detected. Reloaded to GMX home.")
+        if abort_if_ad_popup():
             return False
+
         def fast_find_any(selectors):
             for by_f, val_f in selectors:
                 try:
@@ -69,6 +77,9 @@ def login_process(driver, user, password):
         def fast_locate_in_frames(selectors, timeout=6, prefer_iframe_index=None):
             end_time = time.time() + timeout
             while time.time() < end_time:
+                if abort_if_ad_popup():
+                    return None, None
+
                 if prefer_iframe_index is not None:
                     try:
                         driver.switch_to.default_content()
@@ -144,6 +155,8 @@ def login_process(driver, user, password):
                     return False
 
         current_iframe_index, user_input = fast_locate_in_frames(user_selectors, timeout=8)
+        if abort_if_ad_popup():
+            return False
         if user_input:
             location = "Main Content" if current_iframe_index is None else f"Iframe #{current_iframe_index + 1}"
             print(f"   Found Login Input in {location} (fast scan)")
@@ -153,6 +166,8 @@ def login_process(driver, user, password):
 
         # 5. ENTER USERNAME (Context is correct after scan)
         print("-> Entering Username...")
+        if abort_if_ad_popup():
+            return False
         filled = type_into_element(user_input, user)
         if not filled:
             for by_u, val_u in user_selectors:
@@ -168,6 +183,8 @@ def login_process(driver, user, password):
 
         # 6. CLICK NEXT/WEITER
         print("-> Clicking Next/Weiter...")
+        if abort_if_ad_popup():
+            return False
         # Priority: data-testid -> type=submit -> id
         current_iframe_index, next_button = fast_locate_in_frames(
             button_selectors,
@@ -183,6 +200,8 @@ def login_process(driver, user, password):
 
         # 7. ENTER PASSWORD
         print("-> Entering Password...")
+        if abort_if_ad_popup():
+            return False
         # Priority: data-testid -> id -> name -> xpath
         current_iframe_index, password_input = fast_locate_in_frames(
             password_selectors,
@@ -200,6 +219,8 @@ def login_process(driver, user, password):
 
         # 8. CLICK LOGIN FINAL
         # Priority: data-testid -> type=submit
+        if abort_if_ad_popup():
+            return False
         current_iframe_index, login_button = fast_locate_in_frames(
             button_selectors,
             timeout=4,
