@@ -8,10 +8,13 @@ from test_step2_nav import step_2_navigate
 
 USER = "saucycut1@gmx.de"
 PASS = "muledok5P"
+EMAIL_TO_ADD = "nubily@gmx.de"
 
-def step_3_cleanup(driver, original_email):
+def step_3_cleanup(driver, original_email, email_to_add):
     print("\n--- START TEST STEP 3: CLEANUP EMAILS ---")
     action = ActionChains(driver)
+    target_email = (email_to_add or "").strip()
+    target_email_lower = target_email.lower()
     
     try:
         if reload_if_ad_popup(driver):
@@ -32,6 +35,24 @@ def step_3_cleanup(driver, original_email):
             
             print(f"-> Scanning {len(rows)} rows...")
             found_trash = False
+
+            if target_email_lower:
+                for row in rows:
+                    try:
+                        try:
+                            email_text = row.find_element(By.CSS_SELECTOR, ".table_field strong").text.strip()
+                        except:
+                            email_text = row.text.strip() # Fallback get full row text
+
+                        if target_email_lower in email_text.lower():
+                            print(f"? [PASS] STEP 3: {target_email} already exists. Skip cleanup/add.")
+                            return "EXIST"
+                    except Exception as e:
+                        print(f"   Row read error (maybe DOM changed): {e}")
+                        continue
+
+                # Refresh rows to avoid stale elements after pre-scan
+                rows = driver.find_elements(By.CSS_SELECTOR, ".table_body .table_body-row")
             
             for row in rows:
                 try:
@@ -45,6 +66,8 @@ def step_3_cleanup(driver, original_email):
                     if original_email in email_text:
                         # This is original mail -> Skip
                         continue
+                    
+                    
                     
                     # If reaches here, it's Trash Mail
                     print(f"-> Detected trash: {email_text}")
@@ -90,4 +113,4 @@ if __name__ == "__main__":
     driver = get_driver()
     if login_process(driver, USER, PASS):
         if step_2_navigate(driver):
-            step_3_cleanup(driver, USER)
+            step_3_cleanup(driver, USER, EMAIL_TO_ADD)

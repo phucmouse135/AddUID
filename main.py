@@ -267,7 +267,11 @@ def process_single_account(task):
             return f"{task['raw_line']}\tNAV_FAILED"
 
         # 4. Clean (Delete old mail)
-        step_3_cleanup(driver, user)
+        cleanup_status = step_3_cleanup(driver, user, task.get("email_full_new"))
+        if cleanup_status == "EXIST":
+            final_line = task['raw_line']
+            log_safe(f"[{user}] Target mail already exists. Skip add.", "SUCCESS")
+            return f"{final_line}\tSUCCESS_EXIST"
 
         # 5. Add New Alias (Modified Logic for Backup UIDs)
         domain_part = "@" + task['email_full_new'].split('@')[-1]
