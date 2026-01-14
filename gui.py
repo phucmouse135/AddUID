@@ -21,6 +21,41 @@ COL_KEYS = ["uid_new", "email_full_new", "user_ig", "pass_ig", "2fa", "login_use
 
 class GmxToolApp:
     def __init__(self, root):
+        # ...existing code...
+        # --- File watcher for backup_uids.txt ---
+        self._backup_file_mtime = None
+        self._watch_backup_file()
+        # ...existing code...
+
+    def _watch_backup_file(self):
+        """Auto reload backup table if backup_uids.txt changes on disk."""
+        path = "backup_uids.txt"
+        def check():
+            try:
+                if os.path.exists(path):
+                    mtime = os.path.getmtime(path)
+                    if self._backup_file_mtime is None:
+                        self._backup_file_mtime = mtime
+                    elif mtime != self._backup_file_mtime:
+                        self._backup_file_mtime = mtime
+                        self.load_backup_data()
+            except Exception:
+                pass
+            self.root.after(1000, check)
+        self.root.after(1000, check)
+
+    def clear_backup_table(self, save_file=True):
+        for item in self.tree_backup.get_children():
+            self.tree_backup.delete(item)
+        if save_file:
+            self.save_backup_data()
+
+    def delete_selected_backup_rows(self):
+        selected = self.tree_backup.selection()
+        for item in selected:
+            self.tree_backup.delete(item)
+        self.save_backup_data()
+    def __init__(self, root):
         self.root = root
         self.root.title("GMX Alias Tool - Automation")
         self.root.geometry("1100x600")
@@ -118,7 +153,8 @@ class GmxToolApp:
         ttk.Button(bak_ctrl_frame, text="Load Backup File", command=self.load_backup_data).pack(side="left", padx=5)
         ttk.Button(bak_ctrl_frame, text="Save Backup File", command=self.save_backup_data).pack(side="left", padx=5)
         ttk.Button(bak_ctrl_frame, text="Export Backup", command=self.export_backup_data).pack(side="left", padx=5)
-        ttk.Button(bak_ctrl_frame, text="Clear Backup", command=self.clear_backup_table).pack(side="left", padx=5)
+        ttk.Button(bak_ctrl_frame, text="Clear Backup", command=lambda: self.clear_backup_table(save_file=True)).pack(side="left", padx=5)
+        ttk.Button(bak_ctrl_frame, text="Delete Selected", command=self.delete_selected_backup_rows).pack(side="left", padx=5)
         ttk.Button(bak_ctrl_frame, text="Manual Backup Input", command=self.manual_backup_input).pack(side="left", padx=5)
 
         # Treeview Backup
@@ -159,7 +195,8 @@ class GmxToolApp:
 
         ttk.Separator(bot_frame, orient="vertical").pack(side="left", fill="y", padx=10)
         
-        ttk.Button(bot_frame, text="Export Failed", command=lambda: self.export_data(filter_mode="FAIL")).pack(side="right", padx=5)
+        ttk.Button(bot_frame, text="Export Fail", command=lambda: self.export_data(filter_mode="FAIL_ONLY")).pack(side="right", padx=5)
+        ttk.Button(bot_frame, text="Export No Success", command=lambda: self.export_data(filter_mode="NO_SUCCESS")).pack(side="right", padx=5)
         ttk.Button(bot_frame, text="Export Success", command=lambda: self.export_data(filter_mode="SUCCESS")).pack(side="right", padx=5)
         ttk.Button(bot_frame, text="Export All", command=lambda: self.export_data(filter_mode="ALL")).pack(side="right", padx=5)
         ttk.Button(bot_frame, text="Export Changed UID", command=self.export_changed_uids).pack(side="right", padx=5)
@@ -564,37 +601,34 @@ class GmxToolApp:
         messagebox.showinfo("Done", "Job finished.")
 
     def export_data(self, filter_mode="ALL"):
-        # filter_mode: "ALL", "SUCCESS", "FAIL"
+        # filter_mode: "ALL", "SUCCESS", "FAIL", "NO_SUCCESS", "FAIL_ONLY"
         filename = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text Files", "*.txt")])
         if not filename: return
-        
         try:
             with open(filename, "w", encoding="utf-8") as f:
                 # Write Header
                 header = "\t".join(COLS)
                 f.write(header + "\n")
-                
                 count = 0
                 for item_id in self.tree.get_children():
                     vals = self.tree.item(item_id, "values")
                     status = vals[-1]
-                    
                     is_success = "SUCCESS" in status
                     is_running_pending = "Pending" in status or "Running" in status
-                    
+                    is_fail = not is_success and not is_running_pending
                     # Logic Filter
                     if filter_mode == "SUCCESS":
                         if not is_success: continue
-                    
-                    elif filter_mode == "FAIL":
+                    elif filter_mode == "FAIL":  # legacy: only fail, skip running/pending
                         if is_success or is_running_pending: continue
-                        
+                    elif filter_mode == "NO_SUCCESS":  # Fail + Pending
+                        if is_success: continue
+                    elif filter_mode == "FAIL_ONLY":  # Only fail (not pending/running)
+                        if not is_fail: continue
                     # filter_mode == "ALL" -> Take all
-                        
                     line = "\t".join(vals)
                     f.write(line + "\n")
                     count += 1
-            
             messagebox.showinfo("Export", f"Exported {count} lines ({filter_mode})!")
         except Exception as e:
             messagebox.showerror("Error", str(e))
