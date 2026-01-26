@@ -1,306 +1,175 @@
 # FILE: step1_login.py
 import time
 from selenium.webdriver.common.by import By
-from gmx_core import get_driver, find_element_safe, reload_if_ad_popup
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, ElementClickInterceptedException
 
-# --- DATA TEST DEFAULT ---
+try:
+    from gmx_core import get_driver, reload_if_ad_popup
+except ImportError:
+    from selenium import webdriver
+    def get_driver(headless=False):
+        options = webdriver.ChromeOptions()
+        if headless: options.add_argument("--headless")
+        return webdriver.Chrome(options=options)
+    def reload_if_ad_popup(driver): return False
+
+# --- CONFIG ---
 DEF_USER = "saucycut1@gmx.de"
 DEF_PASS = "muledok5P"
+AUTH_URL = "https://auth.gmx.net/login?prompt=none&state=eyJpZCI6ImVlOTk4N2NmLWE2ZjYtNGQzMy04NjA3LWEwZDFmMTFlMDU0NSIsImNsaWVudElkIjoiZ214bmV0X2FsbGlnYXRvcl9saXZlIiwieFVpQXBwIjoiZ214bmV0LmFsbGlnYXRvci8xLjEwLjEiLCJwYXlsb2FkIjoiZXlKa1l5STZJbUp6SWl3aWRHRnlaMlYwVlZKSklqb2lhSFIwY0hNNkx5OXNhVzVyTG1kdGVDNXVaWFF2YldGcGJDOXphRzkzVTNSaGNuUldhV1YzSWl3aWNISnZZMlZ6YzBsa0lqb2liMmxmY0d0alpWOWpNVGRtTjJNNE55SjkifQ%3D%3D&authcode-context=CcbxFUyzH0"
+
+# --- HELPER FUNCTIONS ---
+
+def safe_click(driver, by, value, timeout=10):
+    try:
+        element = WebDriverWait(driver, timeout).until(
+            EC.element_to_be_clickable((by, value))
+        )
+        element.click()
+        return True
+    except:
+        try:
+            element = driver.find_element(by, value)
+            driver.execute_script("arguments[0].click();", element)
+            return True
+        except:
+            return False
+
+def safe_send_keys(driver, by, value, text, timeout=10):
+    try:
+        element = WebDriverWait(driver, timeout).until(
+            EC.visibility_of_element_located((by, value))
+        )
+        element.clear()
+        element.send_keys(text)
+        return True
+    except:
+        try:
+            element = driver.find_element(by, value)
+            driver.execute_script("arguments[0].value = arguments[1];", element, text)
+            return True
+        except:
+            return False
+
+def check_blocking_popup(driver):
+    """
+    Chỉ trả về True nếu phát hiện Popup CHẶN MÀN HÌNH thực sự.
+    (Đã loại bỏ check iframe chung chung để tránh loop vô hạn)
+    """
+    # Các selector chính xác của GMX Consent/Overlay
+    blocking_selectors = [
+        (By.ID, "permission-layer"),        # Consent form chính
+        (By.ID, "onetrust-banner-sdk"),    # Cookie banner
+        (By.CSS_SELECTOR, ".be-layer-container"), # Lớp phủ đen
+        (By.CSS_SELECTOR, "div[class*='permission-layer']")
+    ]
+    
+    for by, val in blocking_selectors:
+        try:
+            elems = driver.find_elements(by, val)
+            for el in elems:
+                # Điều kiện chặt: Phải hiển thị VÀ kích thước lớn (chặn màn hình)
+                if el.is_displayed() and el.size['height'] > 300 and el.size['width'] > 300:
+                    return True
+        except: pass
+    
+    return False
+# --- MAIN LOGIN LOGIC ---
 
 def login_process(driver, user, password):
-    """
-    Standard Login Function.
-    Returns True if login success, False if failed.
-    """
+    print(f"--- START LOGIN PROCESS: {user} ---")
+    
     try:
-        print(f"--- START LOGIN PROCESS: {user} ---")
+        # 1. TRUY CẬP LINK AUTH
+        driver.get(AUTH_URL)
         
-        # 1. Enter site
-        driver.get("https://www.gmx.net/")
-        time.sleep(3)
-        driver.get("https://www.gmx.net/") # Reload
-
-        def abort_if_ad_popup():
-            if reload_if_ad_popup(driver):
-                print("?? Ad popup detected. Reloaded to GMX home.")
-                return True
-            return False
-
-        if abort_if_ad_popup():
-            return False
+        # 2. NHẬP EMAIL
+        if not safe_send_keys(driver, By.ID, "username", user):
+             if not safe_send_keys(driver, By.CSS_SELECTOR, "input[data-testid='input-username']", user):
+                 print("❌ [FAIL] Không tìm thấy ô nhập Email.")
+                 return False
         
-        # 2. Handle Consent
-        print("-> Check Consent...")
-        find_element_safe(driver, By.ID, "onetrust-accept-btn-handler", timeout=5, click=True)
-        if abort_if_ad_popup():
+        # 3. NHẤN WEITER
+        if not safe_click(driver, By.CSS_SELECTOR, "button[data-testid='button-next']"):
+            print("❌ [FAIL] Không nhấn được nút Weiter.")
+            return False
+            
+        # 4. NHẬP PASSWORD
+        if not safe_send_keys(driver, By.ID, "password", password, timeout=5):
+            if not safe_send_keys(driver, By.CSS_SELECTOR, "input[data-testid='input-password']", password):
+                print("❌ [FAIL] Không tìm thấy ô nhập Password.")
+                return False
+
+        # 5. NHẤN LOGIN
+        print("-> Clicking Login...")
+        if not safe_click(driver, By.CSS_SELECTOR, "button[data-testid='button-next']"):
+            print("❌ [FAIL] Không nhấn được nút Login.")
             return False
 
-        # 3. LOGIC FIND LOGIN FORM (FAST-SCAN MAIN/IFRAME)
-        print("-> Scanning for Login Form (Main or Iframe)...")
-
-        user_selectors = [
-            (By.CSS_SELECTOR, "input[data-testid='input-email']"),
-            (By.NAME, "username"),
-            (By.ID, "username"),
-            (By.CSS_SELECTOR, "input[type='email']"),
-            (By.XPATH, "//input[@autocomplete='username']")
-        ]
-
-        button_selectors = [
-            (By.CSS_SELECTOR, "button[data-testid='login-submit']"),
-            (By.CSS_SELECTOR, "button[type='submit']"),
-            (By.ID, "login-submit")
-        ]
-
-        password_selectors = [
-            (By.CSS_SELECTOR, "input[data-testid='input-password']"),
-            (By.ID, "password"),
-            (By.NAME, "password"),
-            (By.XPATH, "//input[@type='password']")
-        ]
-
-        fast_scan_interval = 0.2
-
-        if abort_if_ad_popup():
-            return False
-
-        def fast_find_any(selectors):
-            for by_f, val_f in selectors:
-                try:
-                    elements = driver.find_elements(by_f, val_f)
-                except Exception:
-                    elements = []
-                if elements:
-                    return elements[0], (by_f, val_f)
-            return None, None
-
-        def fast_locate_in_frames(selectors, timeout=6, prefer_iframe_index=None):
-            end_time = time.time() + timeout
-            while time.time() < end_time:
-                if abort_if_ad_popup():
-                    return None, None
-
-                if prefer_iframe_index is not None:
-                    try:
-                        driver.switch_to.default_content()
-                        iframes = driver.find_elements(By.TAG_NAME, "iframe")
-                        if prefer_iframe_index < len(iframes):
-                            driver.switch_to.frame(iframes[prefer_iframe_index])
-                            element, _ = fast_find_any(selectors)
-                            if element:
-                                return prefer_iframe_index, element
-                    except Exception:
-                        pass
-
-                try:
-                    driver.switch_to.default_content()
-                except Exception:
-                    pass
-
-                element, _ = fast_find_any(selectors)
-                if element:
-                    return None, element
-
-                try:
-                    iframes = driver.find_elements(By.TAG_NAME, "iframe")
-                except Exception:
-                    iframes = []
-
-                for idx, iframe in enumerate(iframes):
-                    try:
-                        driver.switch_to.default_content()
-                        driver.switch_to.frame(iframe)
-                        element, _ = fast_find_any(selectors)
-                        if element:
-                            return idx, element
-                    except Exception:
-                        continue
-
-                time.sleep(fast_scan_interval)
-
-            try:
-                driver.switch_to.default_content()
-            except Exception:
-                pass
-            return None, None
-
-        def click_element(element):
-            try:
-                element.click()
-                return True
-            except Exception:
-                try:
-                    driver.execute_script("arguments[0].click();", element)
-                    return True
-                except Exception:
-                    return False
-
-        def type_into_element(element, text):
-            try:
-                element.clear()
-            except Exception:
-                pass
-            try:
-                element.send_keys(text)
-                return True
-            except Exception:
-                try:
-                    driver.execute_script("arguments[0].value = arguments[1];", element, text)
-                    driver.execute_script(
-                        "arguments[0].dispatchEvent(new Event('input', {bubbles: true}));",
-                        element
-                    )
-                    return True
-                except Exception:
-                    return False
-
-        current_iframe_index, user_input = fast_locate_in_frames(user_selectors, timeout=8)
-        if abort_if_ad_popup():
-            return False
-        if user_input:
-            location = "Main Content" if current_iframe_index is None else f"Iframe #{current_iframe_index + 1}"
-            print(f"   Found Login Input in {location} (fast scan)")
-        else:
-            print("? Login input not found in main/iframes.")
-            return False
-
-        # 5. ENTER USERNAME (Context is correct after scan)
-        print("-> Entering Username...")
-        if abort_if_ad_popup():
-            return False
-        filled = type_into_element(user_input, user)
-        if not filled:
-            for by_u, val_u in user_selectors:
-                if find_element_safe(driver, by_u, val_u, send_keys=user):
-                    filled = True
-                    break
-
-        if not filled:
-            print("? Still cannot enter Username after scan.")
-            return False
-
-        print(f"   Entered: {user}")
-
-        # 6. CLICK NEXT/WEITER
-        print("-> Clicking Next/Weiter...")
-        if abort_if_ad_popup():
-            return False
-        # Priority: data-testid -> type=submit -> id
-        current_iframe_index, next_button = fast_locate_in_frames(
-            button_selectors,
-            timeout=4,
-            prefer_iframe_index=current_iframe_index
-        )
-        if not next_button or not click_element(next_button):
-            if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-testid='login-submit']", click=True):
-                if not find_element_safe(driver, By.CSS_SELECTOR, "button[type='submit']", click=True):
-                    if not find_element_safe(driver, By.ID, "login-submit", click=True):
-                        print("? Next button not found.")
-                        # return False # Try continuing
-
-        # 7. ENTER PASSWORD
-        print("-> Entering Password...")
-        if abort_if_ad_popup():
-            return False
-        # Priority: data-testid -> id -> name -> xpath
-        current_iframe_index, password_input = fast_locate_in_frames(
-            password_selectors,
-            timeout=10,
-            prefer_iframe_index=current_iframe_index
-        )
-        if not password_input or not type_into_element(password_input, password):
-            if not find_element_safe(driver, By.CSS_SELECTOR, "input[data-testid='input-password']", timeout=10, send_keys=password):
-                if not find_element_safe(driver, By.ID, "password", send_keys=password):
-                    if not find_element_safe(driver, By.NAME, "password", send_keys=password):
-                        if not find_element_safe(driver, By.XPATH, "//input[@type='password']", send_keys=password):
-                            print("? Password input not found.")
-                            return False
-        print("   Password entered.")
-
-        # 8. CLICK LOGIN FINAL
-        # Priority: data-testid -> type=submit
-        if abort_if_ad_popup():
-            return False
-        current_iframe_index, login_button = fast_locate_in_frames(
-            button_selectors,
-            timeout=4,
-            prefer_iframe_index=current_iframe_index
-        )
-        if not login_button or not click_element(login_button):
-            if not find_element_safe(driver, By.CSS_SELECTOR, "button[data-testid='login-submit']", click=True):
-                find_element_safe(driver, By.CSS_SELECTOR, "button[type='submit']", click=True)
-        print("-> Clicked Login.")
-
-        # 9. CHECK RESULT
+        # 6. XỬ LÝ REDIRECT & POPUP (LOOP CHECK)
         driver.switch_to.default_content()
         print("-> Waiting for redirection...")
         
-        for _ in range(20):
-            if "navigator" in driver.current_url:
+        end_time = time.time() + 40 # Tăng timeout vì có thể phải redirect vòng vo
+        
+        while time.time() < end_time:
+            current_url = driver.current_url.lower()
+            
+            # --- CASE A: THÀNH CÔNG ---
+            if "navigator" in current_url:
                 print(f"✅ [PASS] Login Success! URL: {driver.current_url}")
                 return True
-            time.sleep(1)
             
-        print("❌ [FAIL] Timeout: Did not reach navigator page.")
+            # --- CASE B: GẶP LỖI HILFE / ERROR -> CHUYỂN VỀ GMX.NET ---
+            # Logic mới: Gặp lỗi này không return False mà redirect về trang chủ
+            if "hilfe.gmx.net" in current_url or "consent-management" in current_url:
+                print(f"⚠️ Redirected to Help/Error page. Force navigating to GMX Home...")
+                driver.get("https://www.gmx.net/")
+                time.sleep(2.5) # Chờ load trang chủ
+                continue # Quay lại đầu vòng lặp để xử lý logic trang chủ (CASE C)
+
+            # --- CASE C: VỀ TRANG CHỦ GMX (Cần xử lý Popup & Click Postfach) ---
+            if "gmx.net" in current_url and "auth" not in current_url and "hilfe" not in current_url:
+                time.sleep(2)
+                driver.get("https://www.gmx.net/") # Refresh để chắc chắn trang sạch
+                time.sleep(2)
+                
+                # B2: Trang sạch -> Tìm nút 'Zum Postfach'
+                btn_selectors = [
+                    (By.XPATH, "//span[contains(text(), 'Zum Postfach')]/parent::button"),
+                    (By.CSS_SELECTOR, "a[href*='navigator']"),
+                    (By.CSS_SELECTOR, "button[data-component='button']")
+                ]
+                
+                found_btn = False
+                for b_by, b_val in btn_selectors:
+                    if safe_click(driver, b_by, b_val, timeout=1):
+                        print(f"-> Clicked 'Zum Postfach' using {b_val}")
+                        found_btn = True
+                        time.sleep(1) 
+                
+                # B3: Force Navigate (Nếu đã login, không có popup, nhưng không thấy nút)
+                if not found_btn:
+                    page_source = driver.page_source.lower()
+                    if "logout" in page_source or "abmelden" in page_source:
+                        print("ℹ️ Logged in but button hidden. Force navigating...")
+                        driver.get("https://navigator.gmx.net/")
+                        time.sleep(1)
+
+            time.sleep(0.5)
+
+        print("❌ [FAIL] Timeout: Không thể vào trang Navigator.")
         return False
 
     except Exception as e:
-        print(f"❌ [FAIL] Login Error: {e}")
+        print(f"❌ [EXCEPTION] Lỗi nghiêm trọng: {e}")
         return False
 
-# Test run if file executed directly
 if __name__ == "__main__":
-    import os
-    INPUT_TEST = "input.txt"
-    
-    if os.path.exists(INPUT_TEST):
-        print(f"--- BULK TEST MODE: Reading {INPUT_TEST} ---")
-
-        output_path = "output.txt"
-        try:
-            with open(INPUT_TEST, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            # Skip header if present
-            start_line = 0
-            if len(lines) > 0 and "UID" in lines[0]:
-                start_line = 1
-            # Prepare output file (overwrite)
-            with open(output_path, "w", encoding="utf-8") as fout:
-                fout.write("uid\tresult\n")
-                for idx, line in enumerate(lines[start_line:]):
-                    line = line.strip()
-                    if not line: continue
-                    parts = line.split('\t')
-                    if len(parts) < 2: parts = line.split()
-                    # Assume Format: ... [User Col 5] [Pass Col 6]
-                    if len(parts) >= 7:
-                        t_uid = parts[0]
-                        t_user = parts[5]
-                        t_pass = parts[6]
-                        print(f"\n[{idx+1}] Testing Account: {t_user}")
-                        driver = get_driver(headless=False)
-                        try:
-                            login_success = login_process(driver, t_user, t_pass)
-                            print(f"Result {t_user}: {'OK' if login_success else 'FAIL'}")
-                            fout.write(f"{t_uid}\t{'success' if login_success else 'fail'}\n")
-                        except Exception as e:
-                            print(f"Error {t_user}: {e}")
-                            fout.write(f"{t_uid}\tfail\n")
-                        finally:
-                            try: driver.quit()
-                            except: pass
-                    else:
-                        print(f"Skipping invalid line: {line}")
-        except Exception as e:
-            print(f"File read error: {e}")
-            
-    else:
-        print("--- SINGLE TEST DEFAULT ---")
-        driver = get_driver()
-        try:
-            login_process(driver, DEF_USER, DEF_PASS)
-        except Exception:
-            pass
-        finally:
-            try: driver.quit()
-            except: pass
+    driver = get_driver(headless=False)
+    try:
+        login_process(driver, DEF_USER, DEF_PASS)
+    finally:
+        pass # driver.quit()
