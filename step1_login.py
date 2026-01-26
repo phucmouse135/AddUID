@@ -112,7 +112,7 @@ def login_process(driver, user, password):
         driver.switch_to.default_content()
         print("-> Waiting for redirection...")
         
-        end_time = time.time() + 40 # Tăng timeout vì có thể phải redirect vòng vo
+        end_time = time.time() + 120 # Tăng timeout vì có thể phải redirect vòng vo
         
         while time.time() < end_time:
             current_url = driver.current_url.lower()
