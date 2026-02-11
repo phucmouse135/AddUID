@@ -8,3 +8,5 @@ output.log
 .env.*
 .ipynb_checkpoints/
 .DS_Store
+
+venv/

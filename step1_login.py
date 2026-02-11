@@ -10,7 +10,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, ElementClickInterceptedException
 
 try:
-    from gmx_core import get_driver, reload_if_ad_popup
+    from gmx_core import get_driver, reload_if_ad_popup, close_driver_and_cleanup
 except ImportError:
     from selenium import webdriver
     def get_driver(headless=False):
@@ -18,6 +18,8 @@ except ImportError:
         if headless: options.add_argument("--headless")
         return webdriver.Chrome(options=options)
     def reload_if_ad_popup(driver): return False
+    def close_driver_and_cleanup(driver): 
+        if driver: driver.quit()
 
 # --- CONFIG ---
 CAPTCHA_API_KEY = "2651ba625c2b6da0697406bff9ffcab2"
@@ -295,5 +297,8 @@ if __name__ == "__main__":
     driver = get_driver(headless=False)
     try:
         login_process(driver, DEF_USER, DEF_PASS)
+        # Keep browser open for a bit if success to see result
+        time.sleep(5)
     finally:
-        pass # driver.quit()
+        # Cleanup temp profile to save disk space
+        close_driver_and_cleanup(driver)
