@@ -31,6 +31,13 @@ except ImportError:
 
 # --- CONFIG ---
 CAPTCHA_API_KEY = os.getenv("CAPTCHA_API_KEY", "2651ba625c2b6da0697406bff9ffcab2")
+# PROXY CONFIG (CaptchaFox yêu cầu Proxy)
+PROXY_TYPE = os.getenv("PROXY_TYPE", "http") # http, socks4, socks5
+PROXY_ADDRESS = os.getenv("PROXY_ADDRESS", "") # IP
+PROXY_PORT = os.getenv("PROXY_PORT", "")       # Port
+PROXY_LOGIN = os.getenv("PROXY_LOGIN", "")     # Optional
+PROXY_PASSWORD = os.getenv("PROXY_PASSWORD", "") # Optional
+
 DEF_USER = "saucycut1@gmx.de"
 DEF_PASS = "muledok5P"
 AUTH_URL = "https://auth.gmx.net/login?prompt=none&state=eyJpZCI6ImVlOTk4N2NmLWE2ZjYtNGQzMy04NjA3LWEwZDFmMTFlMDU0NSIsImNsaWVudElkIjoiZ214bmV0X2FsbGlnYXRvcl9saXZlIiwieFVpQXBwIjoiZ214bmV0LmFsbGlnYXRvci8xLjEwLjEiLCJwYXlsb2FkIjoiZXlKa1l5STZJbUp6SWl3aWRHRnlaMlYwVlZKSklqb2lhSFIwY0hNNkx5OXNhVzVyTG1kdGVDNXVaWFF2YldGcGJDOXphRzkzVTNSaGNuUldhV1YzSWl3aWNISnZZMlZ6YzBsa0lqb2liMmxmY0d0alpWOWpNVGRtTjJNNE55SjkifQ%3D%3D&authcode-context=CcbxFUyzH0"
@@ -68,7 +75,99 @@ def safe_send_keys(driver, by, value, text, timeout=10):
         except:
             return False
 
+def api_solve_captchafox_task(api_key, site_url, site_key, user_agent):
+    """
+    Direct API Call to 2Captcha for CaptchaFox via in.php (Standard API provided in docs)
+    Ref: https://2captcha.com/api-docs/captchafox
+    Method: captchafox
+    """
+    print(f"-> [SPEC] Gọi API 2captcha.com/in.php giải CaptchaFox (Key: {site_key})...")
+    
+    # 1. Construct Proxy String (Required format: login:password@IP:Port or IP:Port)
+    if not (PROXY_ADDRESS and PROXY_PORT):
+        print("❌ [ERROR] CaptchaFox YÊU CẦU PROXY nhưng không tìm thấy cấu hình trong .env")
+        print("   Vui lòng điền PROXY_ADDRESS, PROXY_PORT (và LOGIN/PASS nếu có) vào file .env")
+        return None
+
+    proxy_str = f"{PROXY_ADDRESS}:{PROXY_PORT}"
+    if PROXY_LOGIN and PROXY_PASSWORD:
+        proxy_str = f"{PROXY_LOGIN}:{PROXY_PASSWORD}@{PROXY_ADDRESS}:{PROXY_PORT}"
+    
+    print(f"-> [PROXY] Proxy String: {proxy_str} (Type: {PROXY_TYPE})")
+
+    # 2. Create Task
+    try:
+        url_in = "https://2captcha.com/in.php"
+        
+        payload = {
+            "key": api_key,
+            "method": "captchafox",
+            "sitekey": site_key,
+            "pageurl": site_url,
+            "proxy": proxy_str,
+            "proxytype": PROXY_TYPE,
+            "useragent": user_agent,
+            "json": 1
+        }
+        
+        # Gửi request POST JSON
+        # Lưu ý: Tài liệu mẫu ghi JSON payload, nên ta dùng json=payload
+        res = requests.post(url_in, json=payload, timeout=30).json()
+        
+        if res.get("status") != 1:
+            err_desc = res.get("request")
+            print(f"❌ Upload Failed: {err_desc}")
+            if "ERROR_ZERO_BALANCE" in str(err_desc):
+                print("⚠️  Tài khoản 2Captcha không đủ tiền.")
+            if "ERROR_PROXY" in str(err_desc):
+                print("⚠️  Lỗi Proxy (Kết nối timeout hoặc sai định dạng).")
+            return None
+            
+        task_id = res["request"]
+        print(f"-> Task Created successfully. Task ID: {task_id}")
+        
+        # 3. Get Result Loop
+        url_res = "https://2captcha.com/res.php"
+        poll_payload = {
+            "key": api_key,
+            "action": "get",
+            "id": task_id,
+            "json": 1
+        }
+
+        for i in range(40): # Wait up to 200s
+            time.sleep(5)
+            try:
+                # 2Captcha res.php thường support cả GET và POST
+                r = requests.post(url_res, json=poll_payload, timeout=10).json()
+            except:
+                continue
+            
+            status = r.get("status")
+            request_frame = r.get("request")
+
+            if status == 1:
+                token = request_frame
+                print(f"✅ Giải CaptchaFox thành công! Token: {token[:20]}...")
+                return token
+            
+            if request_frame == "CAPCHA_NOT_READY":
+                 print(f"   ... Waiting for CaptchaFox solution ({i*5}s)")
+                 continue
+            
+            if status == 0:
+                 print(f"❌ Pooling Error: {request_frame}")
+                 return None
+            
+        print("❌ Timeout waiting for CaptchaFox result")
+        return None
+        
+    except Exception as e:
+        print(f"❌ Exception in api_solve_captchafox_task: {e}")
+        return None
+
 def solve_gmx_captchafox(driver, api_key):
+
     """
     Sử dụng thư viện 2captcha-python chính thức.
     Ưu tiên lấy Dynamic SiteKey để tránh lỗi ERROR_SITEKEY.
@@ -127,19 +226,97 @@ def solve_gmx_captchafox(driver, api_key):
 
             except: pass
         
-        # Cách 1.5: Quét iframe src để tìm sitekey=0x... (Vì đôi khi nó nằm trong iframe)
-        frames = driver.find_elements(By.TAG_NAME, "iframe")
-        for frame in frames:
-            try:
-                src = frame.get_attribute("src")
-                if src and "sitekey=" in src:
-                    m = re.search(r'sitekey=(0x[A-Za-z0-9_-]+)', src)
-                    if m:
-                        k = m.group(1)
+        # Cách 1.5: Quét iframe (Sâu & Recursive)
+        # Vì Cloudflare Turnstile thường ẩn trong iframe lồng nhau
+        try:
+            original_window = driver.current_window_handle
+            
+            def scan_frames(depth=0):
+                if depth > 3: return # Limit depth
+                
+                # Check current frame's source
+                try:
+                    src = driver.page_source
+                    matches = re.findall(r'sitekey=["\']?(0x[A-Za-z0-9_-]+)', src)
+                    for k in matches:
                         if k not in candidate_keys:
-                            print(f"-> [PAGESOURCE] Found Key in Iframe: {k} (PRIORITY!)")
+                            print(f"-> [FRAME-SCAN] Found Key in Frame Source: {k} (PRIORITY!)")
                             candidate_keys.insert(0, k)
+                except: pass
+
+                # Loop children frames
+                iframes = driver.find_elements(By.TAG_NAME, "iframe")
+                for i, frame in enumerate(iframes):
+                    try:
+                        # Check src attribute first (fast)
+                        f_src = frame.get_attribute("src") or ""
+                        m_src = re.search(r'sitekey=(0x[A-Za-z0-9_-]+)', f_src)
+                        if m_src:
+                            k = m_src.group(1)
+                            if k not in candidate_keys:
+                                print(f"-> [FRAME-ATTR] Found Key in Iframe Src: {k} (PRIORITY!)")
+                                candidate_keys.insert(0, k)
+
+                        # Switch and recurse
+                        driver.switch_to.frame(frame)
+                        scan_frames(depth + 1)
+                        driver.switch_to.parent_frame()
+                    except:
+                        driver.switch_to.parent_frame()
+            
+            # Start scan
+            scan_frames()
+            driver.switch_to.window(original_window) # Restore
+            
+        except Exception as e:
+            print(f"-> Frame scan error: {e}")
+            try: driver.switch_to.default_content() 
             except: pass
+
+        # Cách 1.75: Quét Shadow DOM (Deep Scan bằng JS)
+        # Cloudflare Turnstile thường ẩn trong Shadow Root để tránh bot
+        print("-> Đang quét Shadow DOM để tìm SiteKey ẩn...")
+        shadow_key = driver.execute_script("""
+            function findKey(root) {
+                if (!root) return null;
+                
+                // 1. Check elements in this root having sitekey
+                let selector = '[sitekey^="0x"], [data-sitekey^="0x"], div[id^="cf-"]';
+                let els = root.querySelectorAll(selector);
+                for (let el of els) {
+                    if (el.getAttribute('sitekey')) return el.getAttribute('sitekey');
+                    if (el.getAttribute('data-sitekey')) return el.getAttribute('data-sitekey');
+                }
+
+                // 2. Check iframe srcs in this root
+                let frames = root.querySelectorAll('iframe');
+                for (let f of frames) {
+                    try {
+                        if (f.src && f.src.includes('sitekey=0x')) {
+                            let m = f.src.match(/sitekey=(0x[A-Za-z0-9_-]+)/);
+                            if (m) return m[1];
+                        }
+                    } catch(e){}
+                }
+
+                // 3. Recurse into children's shadow roots
+                // TreeWalker is faster than full recursion on all nodes
+                let walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null, false);
+                while(walker.nextNode()) {
+                    let node = walker.currentNode;
+                    if (node.shadowRoot) {
+                        let found = findKey(node.shadowRoot);
+                        if (found) return found;
+                    }
+                }
+                return null;
+            }
+            return findKey(document) || findKey(document.body);
+        """)
+        
+        if shadow_key and shadow_key not in candidate_keys:
+            print(f"-> [SHADOW-DOM] Found Hidden Turnstile Key: {shadow_key} (PRIORITY!)")
+            candidate_keys.insert(0, shadow_key)
 
         # Cách 2: Tìm trong element Checkbox/Widget
         print("-> Đang quét SiteKey từ DOM...")
@@ -151,66 +328,100 @@ def solve_gmx_captchafox(driver, api_key):
         # Cách 3: Tìm trong Page Source (Regex Clean)
         html = driver.page_source
         patterns = [
-            r'captchafox\.com/captcha/([a-zA-Z0-9_-]+)',
-            r'["\'](sk_uVvZ[a-zA-Z0-9_-]+)["\']', # Priority GMX Key
-            r'sitekey["\']?\s*[:=]\s*["\'](sk_[a-zA-Z0-9_-]+)["\']',
-            r'sitekey["\']?\s*[:=]\s*["\'](0x[a-zA-Z0-9_-]+)["\']', # Patterns cho 0x keys
+            r'sitekey["\']?\s*[:=]\s*["\'](0x[a-zA-Z0-9_-]+)["\']', # CHỈ LẤY Key 0x
         ]
         for p in patterns:
             param_matches = re.findall(p, html)
             for m in param_matches:
-                 # Key CaptchaFox (sk_) or Turnstile (0x) length checks
-                 if 20 < len(m) < 100 and " " not in m and m not in candidate_keys: 
-                     if m.startswith("0x"):
+                 # Chỉ nhận key 0x, bỏ qua key sk_
+                 if 20 < len(m) < 100 and " " not in m and m.startswith("0x"): 
+                     if m not in candidate_keys:
                          candidate_keys.insert(0, m)
-                     else:
-                         candidate_keys.append(m)
 
     except Exception as e:
         print(f"-> Lỗi khi tìm SiteKey: {e}")
 
-    # Fallback Keys
-    # Key Turnstile gốc của GMX (nếu bắt được trước đây)
-    fallback_cf = "0x4AAAAAAAC3DHQFLr1Gavgn"
-    if fallback_cf not in candidate_keys: candidate_keys.append(fallback_cf)
-
-    fallback_fox = "sk_uVvZFK06t1rgOKEXgJafrEXI4f9e4" # Key cứng GMX CaptchaFox
-    if fallback_fox not in candidate_keys: candidate_keys.append(fallback_fox)
+    # --- [NEW] CÁCH 4: Quét Chậm Iframe SRC (Quan trọng nhất cho GMX) ---
+    print("-> Đang đợi iframe Turnstile xuất hiện (Max 10s)...")
+    found_real_key = False
     
-    # Remove duplicates
-    candidate_keys = list(dict.fromkeys([k for k in candidate_keys if k]))
+    # Retry loop để bắt key khi iframe vừa load xong
+    for attempt in range(10):
+        try:
+            iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            for f in iframes:
+                src = f.get_attribute("src") or ""
+                # Turnstile iframe luôn có sitekey trong URL
+                if "sitekey=0x" in src:
+                    m = re.search(r'sitekey=(0x[A-Za-z0-9_-]+)', src)
+                    if m: 
+                        real_key = m.group(1)
+                        if real_key not in candidate_keys:
+                            candidate_keys.insert(0, real_key) # Ưu tiên số 1
+                            print(f"-> [IFRAME-DETECT] Tìm thấy SiteKey chuẩn trong src: {real_key}")
+                            found_real_key = True
+        except: pass
+        
+        if found_real_key: break
+        time.sleep(1)
+
+    # Lọc danh sách: Giữ cả 0x (Turnstile) và sk_ (CaptchaFox)
+    # Vì giờ ta đã có solver riêng cho từng loại
+    candidate_keys = list(dict.fromkeys([k for k in candidate_keys if k and (k.startswith("0x") or k.startswith("sk_"))]))
+
+    # Fallback Keys
+    if not candidate_keys:
+        print(f"⚠️ Không tìm thấy key động, dùng bộ Fallback.")
+        candidate_keys.append("0x4AAAAAAAC3DHQFLr1Gavgn") # Turnstile GMX
+        candidate_keys.append("sk_uVvZFK06t1rgOKEXgJafrEXI4f9e4") # CaptchaFox GMX
+    
     print(f"-> Danh sách Key tiềm năng: {candidate_keys}")
 
-    if not candidate_keys:
-        print("❌ [ABORT] Không tìm thấy bất kỳ SiteKey nào.")
-        return False
-
-    # 3. GIẢI CAPTCHA (Loop Candidates)
+    # 3. GIẢI CAPTCHA (Phân loại Key)
     clean_url = driver.current_url.split('?')[0]
     solver = TwoCaptcha(apiKey=api_key, defaultTimeout=120, pollingInterval=5)
+    
+    # [QUAN TRỌNG] Lấy User-Agent hiện tại
+    current_ua = driver.execute_script("return navigator.userAgent;")
     token = None
     
     for s_key in candidate_keys:
-        print(f"-> Đang thử giải với Key: {s_key} (URL: {clean_url})")
+        print(f"-> Quyết định giải với Key: {s_key}")
+        
         try:
-            result = solver.turnstile(sitekey=s_key, url=clean_url)
-            token = result['code']
-            print(f"-> [THÀNH CÔNG] SDK 2Captcha đã giải quyết xong! Token length: {len(token)}")
-            break # Success
+            # CASE 1: CaptchaFox Native (sk_...)
+            if s_key.startswith("sk_"):
+                print("   [MODE] Phát hiện Key CaptchaFox -> Dùng api_solve_captchafox_task")
+                token = api_solve_captchafox_task(api_key, clean_url, s_key, current_ua)
+            
+            # CASE 2: Cloudflare Turnstile (0x...)
+            else:
+                print("   [MODE] Phát hiện Key Turnstile -> Dùng solver.turnstile")
+                result = solver.turnstile(
+                    sitekey=s_key, 
+                    url=clean_url,
+                    userAgent=current_ua
+                )
+                token = result['code']
+            
+            if token:
+                print(f"-> [THÀNH CÔNG] Đã lấy được Token! Length: {len(token)}")
+                break 
+
         except Exception as e:
             print(f"⚠️ Thất bại với key {s_key}: {e}")
-            if "ERROR_SITEKEY" in str(e):
-                continue # Try next key
+            if "ERROR_SITEKEY" in str(e) or "UNSOLVABLE" in str(e):
+                continue
             else:
-                return False
+                pass # Try next key
 
     if not token:
         print("❌ [FAIL] Không giải được Captcha với danh sách Key hiện có.")
         return False
 
-    # 4. TIÊM TOKEN VÀO TRÌNH DUYỆT
+    # 4. TIÊM TOKEN VÀO TRÌNH DUYỆT (NÂNG CAO CHO GMX)
     try:
-        # Script này xử lý cả cf-turnstile-response và g-recaptcha-response để chắc chắn
+        # Script này xử lý cả việc gửi request API ngầm (giống request người dùng cung cấp)
         driver.execute_script(f"""
             let token = '{token}';
             
@@ -222,6 +433,9 @@ def solve_gmx_captchafox(driver, api_key):
                 let el = document.querySelector(`input[name="${{name}}"]`);
                 if (el) {{
                     el.value = token;
+                    // Trigger events để GMX nhận diện thay đổi
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
                     found = true;
                 }}
             }});
@@ -232,20 +446,79 @@ def solve_gmx_captchafox(driver, api_key):
                 if (form) {{
                     let input = document.createElement('input');
                     input.type = 'hidden';
-                    input.name = 'cf-turnstile-response'; // Name phổ biến nhất hiện nay
+                    input.name = 'cf-turnstile-response'; 
+                    input.id = 'cf-turnstile-response';
                     input.value = token;
                     form.appendChild(input);
+                    // Force submit form if needed (đôi khi cần thiết)
+                    // console.log("Force Injecting Input");
                 }}
             }}
             
-            // 3. Callback JS (nếu trang web dùng callback thay vì form submit)
-            // Thử gọi callback của Cloudflare nếu tồn tại
+            // 3. XỬ LÝ ĐẶC BIỆT CHO GMX (QUAN TRỌNG)
+            // GMX dùng cơ chế lắng nghe message từ iframe hoặc callback global
             try {{
-                if (typeof turnstile !== 'undefined' && typeof turnstile.render === 'function') {{
-                    // Đây là tricky, thường chỉ cần điền input là đủ với selenium
-                }}
+               // Giả lập callback của Turnstile/CaptchaFox
+               if (typeof turnstile !== 'undefined' && turnstile.execute) {{
+                   console.log("Calling turnstile.execute()...");
+               }}
+               
+               // Tìm callback function trong window global (thường tên ngẫu nhiên hoặc 'onSuccess')
+               // Nhưng quan trọng nhất: GMX thường check biến toàn cục, ta gán token vào đó
+               window.captchafox_token = token; 
             }} catch(e) {{}}
         """)
+        
+        # 5. GỬI REQUEST XÁC MINH TRỰC TIẾP (Backdoor giống cURL người dùng cung cấp)
+        # GMX có endpoint API riêng để xác nhận captcha, ta sẽ gọi fetch() trực tiếp từ console browser.
+        # Dữ liệu lấy từ gói tin mẫu người dùng cung cấp.
+        print("-> Đang thử gửi API Verification ngầm (Phương pháp cURL Sim)...")
+        driver.execute_script(f"""
+            (async () => {{
+                try {{
+                    // Lấy sessionId từ URL hoặc cookie (LS-...)
+                    let sessionId = new URLSearchParams(window.location.search).get('state') || 'ls-unknown';
+                    
+                    // Thử tìm sessionId trong cookie ls.rec hoặc tương tự
+                    let cookies = document.cookie.split(';');
+                    let ls_rec = '';
+                    for(let c of cookies) {{
+                        if(c.trim().startsWith('__Host-ls.rec=')) {{
+                            ls_rec = c.trim().split('=')[1];
+                        }}
+                    }}
+                    
+                    // Construct payload giống mẫu cURL
+                    // Lưu ý: sessionId thực tế của GMX rất phức tạp, ta thử dùng 'state' param hoặc ls-token
+                    // API Endpoint: https://login.gmx.net/rest/login-flow/captchafox-verification
+                    
+                    let payload = {{
+                        "captcha": {{
+                            "response": "{token}",
+                            "siteKey": "{site_key}"
+                        }},
+                        "sessionId": "ls-" + ls_rec // Cố gắng build lại sessionId hợp lệ
+                    }};
+
+                    // Gửi fetch request
+                    await fetch("https://login.gmx.net/rest/login-flow/captchafox-verification", {{
+                        method: "POST",
+                        headers: {{
+                            "content-type": "application/json",
+                            "accept": "application/json, text/plain, */*"
+                        }},
+                        body: JSON.stringify(payload)
+                    }});
+                    console.log("Sent verification request");
+                }} catch(e) {{ console.error("Fetch error", e); }}
+            }})();
+        """)
+        
+        print("-> Đã Inject Token và trigger API Verification.")
+        return True
+        
+    except Exception as inject_err:
+        print(f"❌ [EXCEPTION] Lỗi khi inject Token vào DOM: {inject_err}")
         print("-> Đã Inject Token vào DOM thành công.")
         return True
         
