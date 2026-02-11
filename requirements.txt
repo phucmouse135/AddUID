@@ -2,3 +2,5 @@ selenium
 webdriver-manager
 setuptools
 fake-useragent
+python-dotenv
+2captcha-python

@@ -4,10 +4,18 @@ import json
 import urllib.request
 import urllib.parse
 import re
+import requests
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException, ElementClickInterceptedException
+from selenium.webdriver.common.keys import Keys
+from twocaptcha import TwoCaptcha
 
 try:
     from gmx_core import get_driver, reload_if_ad_popup, close_driver_and_cleanup
@@ -22,7 +30,7 @@ except ImportError:
         if driver: driver.quit()
 
 # --- CONFIG ---
-CAPTCHA_API_KEY = "2651ba625c2b6da0697406bff9ffcab2"
+CAPTCHA_API_KEY = os.getenv("CAPTCHA_API_KEY", "2651ba625c2b6da0697406bff9ffcab2")
 DEF_USER = "saucycut1@gmx.de"
 DEF_PASS = "muledok5P"
 AUTH_URL = "https://auth.gmx.net/login?prompt=none&state=eyJpZCI6ImVlOTk4N2NmLWE2ZjYtNGQzMy04NjA3LWEwZDFmMTFlMDU0NSIsImNsaWVudElkIjoiZ214bmV0X2FsbGlnYXRvcl9saXZlIiwieFVpQXBwIjoiZ214bmV0LmFsbGlnYXRvci8xLjEwLjEiLCJwYXlsb2FkIjoiZXlKa1l5STZJbUp6SWl3aWRHRnlaMlYwVlZKSklqb2lhSFIwY0hNNkx5OXNhVzVyTG1kdGVDNXVaWFF2YldGcGJDOXphRzkzVTNSaGNuUldhV1YzSWl3aWNISnZZMlZ6YzBsa0lqb2liMmxmY0d0alpWOWpNVGRtTjJNNE55SjkifQ%3D%3D&authcode-context=CcbxFUyzH0"
@@ -60,102 +68,190 @@ def safe_send_keys(driver, by, value, text, timeout=10):
         except:
             return False
 
-def solve_captchafox(driver):
-    print("--- DETECTED CAPTCHA INTERACTION ---")
+def solve_gmx_captchafox(driver, api_key):
+    """
+    Sử dụng thư viện 2captcha-python chính thức.
+    Ưu tiên lấy Dynamic SiteKey để tránh lỗi ERROR_SITEKEY.
+    """
+    print("--- DETECTED CAPTCHAFOX INTERACTION ---")
+
+    # 1. CLICK CHECKBOX 'Ich bin ein Mensch'
     try:
-        # 1. Click 'Ich bin ein Mensch' checkbox
         btn_xpath = "//*[contains(text(), 'Ich bin ein Mensch')]"
-        try:
-             element = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.XPATH, btn_xpath))
-             )
-             element.click()
-             print("-> Clicked 'Ich bin ein Mensch'.")
-             time.sleep(3) # Wait for widget to update
-        except:
-             print("-> Button not clickable or already clicked.")
+        element = WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.XPATH, btn_xpath))
+        )
+        element.click()
+        print("-> Đã click Checkbox. Đang tìm SiteKey...")
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "[data-sitekey]"))
+        )
+        time.sleep(3) # Chờ DOM render
+    except Exception:
+        print("-> Không thấy nút Checkbox (hoặc đã click).")
 
-        # 2. Extract SiteKey (Retry Loop)
-        sitekey = None
-        for i in range(5):
-            source = driver.page_source
-            # Regex for data-sitekey (Standard)
-            m = re.search(r'data-sitekey=["\']([^"\']+)["\']', source)
-            if m: 
-                sitekey = m.group(1)
-                break
-            else:
-                # Try finding inside script config or iframe src
-                m2 = re.search(r'siteKey=["\']([^"\']+)["\']', source, re.IGNORECASE)
-                if m2: 
-                    sitekey = m2.group(1)
-                    break
-            time.sleep(1)
+    # 2. TỰ ĐỘNG LẤY CANDIDATE SITEKEYS
+    candidate_keys = []
 
-        if not sitekey:
-            print("❌ [FAIL] Could not find SiteKey (Turnstile/CaptchaFox).")
-            return False
+    try:
+        # Cách 1: Network Traffic Analysis (BẮT SỐNG GÓI TIN - CHÍNH XÁC NHẤT)
+        print("-> Đang phân tích Network Log để tìm SiteKey thật...")
+        logs = driver.get_log("performance")
         
-        print(f"-> Found SiteKey: {sitekey}")
+        # Regex Capture:
+        # 1. CaptchaFox Wrapper Key (sk_...)
+        # 2. Cloudflare Turnstile Real Key (0x...) - Key này mới quan trọng để giải Turnstile!
+        
+        for entry in logs:
+            try:
+                message = json.loads(entry["message"])["message"]
+                if message["method"] == "Network.requestWillBeSent":
+                    url = message["params"]["request"]["url"]
+                    
+                    # Pattern 1: Tìm Key CaptchaFox (sk_...)
+                    m1 = re.search(r'captchafox\.com/captcha/(sk_[a-zA-Z0-9_-]+)/', url)
+                    if m1:
+                        key = m1.group(1)
+                        if key not in candidate_keys:
+                            print(f"-> [NETWORK] Found CaptchaFox Key: {key}")
+                            candidate_keys.append(key)
 
-        # 3. Send Task to 2Captcha
-        # Using TurnstileTaskProxyless as it works without proxy and matches the UI "Ich bin ein Mensch" (Cloudflare)
-        req_url = "https://api.2captcha.com/createTask"
-        payload = {
-            "clientKey": CAPTCHA_API_KEY,
-            "task": {
-                "type": "TurnstileTaskProxyless", 
-                "websiteURL": driver.current_url,
-                "websiteKey": sitekey
-            }
-        }
-        
-        req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read().decode('utf-8'))
-        
-        if data.get("errorId") != 0:
-            print(f"❌ [2Captcha] Create Task Error: {data.get('errorDescription')}")
-            return False
-            
-        task_id = data.get("taskId")
-        print(f"-> Task Created: {task_id}. Waiting for solution...")
+                    # Pattern 2: Tìm Key Turnstile (0x...) trong URL params của Cloudflare
+                    # VD: https://challenges.cloudflare.com/turnstile/.../api.js?onload=...&sitekey=0x4AAAAAAAC3DHQFLr1Gavgn
+                    m2 = re.search(r'sitekey=(0x[A-Za-z0-9_-]+)', url)
+                    if m2:
+                        key = m2.group(1)
+                        if key not in candidate_keys:
+                            print(f"-> [NETWORK] Found Turnstile Key: {key} (PRIORITY!)")
+                            candidate_keys.insert(0, key) # Ưu tiên tuyệt đối
 
-        # 4. Poll Result
-        for _ in range(25): # 125s max
-            time.sleep(5)
-            res_url = "https://api.2captcha.com/getTaskResult"
-            res_json = {"clientKey": CAPTCHA_API_KEY, "taskId": task_id}
-            
-            req2 = urllib.request.Request(res_url, data=json.dumps(res_json).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req2) as resp2:
-                res_data = json.loads(resp2.read().decode('utf-8'))
-            
-            if res_data.get("status") == "ready":
-                token = res_data.get("solution", {}).get("token")
-                print("-> Captcha SOLVED!")
-                
-                # 5. Inject Token
-                # Try Turnstile and Recaptcha standard fields
-                driver.execute_script(f"""
-                    let el1 = document.querySelector('[name="cf-turnstile-response"]');
-                    let el2 = document.querySelector('[name="g-recaptcha-response"]');
-                    if(el1) el1.value = "{token}";
-                    if(el2) el2.value = "{token}";
-                """)
-                return True
-            
-            if res_data.get("errorId") != 0:
-                print(f"❌ [2Captcha] Poll Error: {res_data.get('errorDescription')}")
-                return False
-                
-        print("❌ [2Captcha] Timeout.")
-        return False
+            except: pass
         
+        # Cách 1.5: Quét iframe src để tìm sitekey=0x... (Vì đôi khi nó nằm trong iframe)
+        frames = driver.find_elements(By.TAG_NAME, "iframe")
+        for frame in frames:
+            try:
+                src = frame.get_attribute("src")
+                if src and "sitekey=" in src:
+                    m = re.search(r'sitekey=(0x[A-Za-z0-9_-]+)', src)
+                    if m:
+                        k = m.group(1)
+                        if k not in candidate_keys:
+                            print(f"-> [PAGESOURCE] Found Key in Iframe: {k} (PRIORITY!)")
+                            candidate_keys.insert(0, k)
+            except: pass
+
+        # Cách 2: Tìm trong element Checkbox/Widget
+        print("-> Đang quét SiteKey từ DOM...")
+        cf_elements = driver.find_elements(By.CSS_SELECTOR, "[data-sitekey]")
+        if cf_elements:
+            val = cf_elements[0].get_attribute("data-sitekey")
+            if val and val not in candidate_keys: candidate_keys.append(val)
+        
+        # Cách 3: Tìm trong Page Source (Regex Clean)
+        html = driver.page_source
+        patterns = [
+            r'captchafox\.com/captcha/([a-zA-Z0-9_-]+)',
+            r'["\'](sk_uVvZ[a-zA-Z0-9_-]+)["\']', # Priority GMX Key
+            r'sitekey["\']?\s*[:=]\s*["\'](sk_[a-zA-Z0-9_-]+)["\']',
+            r'sitekey["\']?\s*[:=]\s*["\'](0x[a-zA-Z0-9_-]+)["\']', # Patterns cho 0x keys
+        ]
+        for p in patterns:
+            param_matches = re.findall(p, html)
+            for m in param_matches:
+                 # Key CaptchaFox (sk_) or Turnstile (0x) length checks
+                 if 20 < len(m) < 100 and " " not in m and m not in candidate_keys: 
+                     if m.startswith("0x"):
+                         candidate_keys.insert(0, m)
+                     else:
+                         candidate_keys.append(m)
+
     except Exception as e:
-        print(f"❌ [EXCEPTION] in solve_captchafox: {e}")
+        print(f"-> Lỗi khi tìm SiteKey: {e}")
+
+    # Fallback Keys
+    # Key Turnstile gốc của GMX (nếu bắt được trước đây)
+    fallback_cf = "0x4AAAAAAAC3DHQFLr1Gavgn"
+    if fallback_cf not in candidate_keys: candidate_keys.append(fallback_cf)
+
+    fallback_fox = "sk_uVvZFK06t1rgOKEXgJafrEXI4f9e4" # Key cứng GMX CaptchaFox
+    if fallback_fox not in candidate_keys: candidate_keys.append(fallback_fox)
+    
+    # Remove duplicates
+    candidate_keys = list(dict.fromkeys([k for k in candidate_keys if k]))
+    print(f"-> Danh sách Key tiềm năng: {candidate_keys}")
+
+    if not candidate_keys:
+        print("❌ [ABORT] Không tìm thấy bất kỳ SiteKey nào.")
         return False
 
+    # 3. GIẢI CAPTCHA (Loop Candidates)
+    clean_url = driver.current_url.split('?')[0]
+    solver = TwoCaptcha(apiKey=api_key, defaultTimeout=120, pollingInterval=5)
+    token = None
+    
+    for s_key in candidate_keys:
+        print(f"-> Đang thử giải với Key: {s_key} (URL: {clean_url})")
+        try:
+            result = solver.turnstile(sitekey=s_key, url=clean_url)
+            token = result['code']
+            print(f"-> [THÀNH CÔNG] SDK 2Captcha đã giải quyết xong! Token length: {len(token)}")
+            break # Success
+        except Exception as e:
+            print(f"⚠️ Thất bại với key {s_key}: {e}")
+            if "ERROR_SITEKEY" in str(e):
+                continue # Try next key
+            else:
+                return False
+
+    if not token:
+        print("❌ [FAIL] Không giải được Captcha với danh sách Key hiện có.")
+        return False
+
+    # 4. TIÊM TOKEN VÀO TRÌNH DUYỆT
+    try:
+        # Script này xử lý cả cf-turnstile-response và g-recaptcha-response để chắc chắn
+        driver.execute_script(f"""
+            let token = '{token}';
+            
+            // 1. Tìm các input ẩn thường dùng
+            let inputNames = ['cf-turnstile-response', 'g-recaptcha-response', 'captchafox-response'];
+            let found = false;
+            
+            inputNames.forEach(name => {{
+                let el = document.querySelector(`input[name="${{name}}"]`);
+                if (el) {{
+                    el.value = token;
+                    found = true;
+                }}
+            }});
+
+            // 2. Nếu không có, tạo mới input ẩn và append vào form
+            if (!found) {{
+                let form = document.querySelector('form');
+                if (form) {{
+                    let input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'cf-turnstile-response'; // Name phổ biến nhất hiện nay
+                    input.value = token;
+                    form.appendChild(input);
+                }}
+            }}
+            
+            // 3. Callback JS (nếu trang web dùng callback thay vì form submit)
+            // Thử gọi callback của Cloudflare nếu tồn tại
+            try {{
+                if (typeof turnstile !== 'undefined' && typeof turnstile.render === 'function') {{
+                    // Đây là tricky, thường chỉ cần điền input là đủ với selenium
+                }}
+            }} catch(e) {{}}
+        """)
+        print("-> Đã Inject Token vào DOM thành công.")
+        return True
+        
+    except Exception as inject_err:
+        print(f"❌ [EXCEPTION] Lỗi khi inject Token vào DOM: {inject_err}")
+        return False
 def check_blocking_popup(driver):
     """
     Chỉ trả về True nếu phát hiện Popup CHẶN MÀN HÌNH thực sự.
@@ -179,6 +275,7 @@ def check_blocking_popup(driver):
         except: pass
     
     return False
+
 # --- MAIN LOGIN LOGIC ---
 
 def login_process(driver, user, password):
@@ -200,9 +297,10 @@ def login_process(driver, user, password):
             return False
 
         # --- INTERMEDIATE CHECK: Captcha or Password ---
-        print("-> Checking: Password field OR CaptchaFox...")
+        print("-> Checking: Password field OR CaptchaFox (Wait up to 30s)...")
+        time.sleep(2) # Give page a moment to render
         check_start = time.time()
-        while time.time() - check_start < 15:
+        while time.time() - check_start < 30:
             # Case A: Password Field Found
             if len(driver.find_elements(By.ID, "password")) > 0 or len(driver.find_elements(By.CSS_SELECTOR, "input[data-testid='input-password']")) > 0:
                 print("-> Password field found.")
@@ -213,25 +311,37 @@ def login_process(driver, user, password):
             if len(captcha_elems) > 0 and captcha_elems[0].is_displayed():
                 print("⚠️ CaptchaFox/Turnstile detected. Initiating solver...")
                 
+                # Wait a bit for captcha to fully load
+                time.sleep(3)
+                
                 # Retry solving up to 3 times
                 solved = False
                 for solve_attempt in range(3):
-                    if solve_captchafox(driver):
+                    if solve_gmx_captchafox(driver, CAPTCHA_API_KEY):
                         solved = True
                         break
                     else:
-                        print(f"⚠️ Captcha solve failed (Attempt {solve_attempt+1}/3). Retrying...")
+                        print(f"⚠️ Captcha solve failed (Attempt {solve_attempt+1}/3).")
+                        if solve_attempt < 2:
+                            print("-> Refreshing page to get new SiteKey/Challenge...")
+                            driver.refresh()
+                            time.sleep(5)
+                            # Re-click 'Ich bin ein Mensch' if needed (Logic handled inside solve_gmx_captchafox or page reload flow)
+                            # Note: Refreshing brings us back to Email or Captcha page depending on GMX state.
+                            # We need to breaking the loop or handle state carefully.
+                            # Actually, for GMX, Refresh usually resets the flow. 
+                            # Safe strategy: Break this inner loop, let the outer 'while' checking loop handle rediscovery.
+                            print("-> Page refreshed. Re-checking elements...")
+                            break 
                         time.sleep(2)
                         
                 if solved:
                     print("-> Solved. Waiting for transition to password...")
-                    time.sleep(3)
+                    time.sleep(5) # Increased wait after solve
                     check_start = time.time() # Reset timer to wait for password
                     continue
                 else:
                     print("❌ Failed to solve captcha after 3 attempts.")
-                    # Continue anyway to see if it acts weird or allow manual intervention? 
-                    # Usually better to break or return False, but loop continues to check Pass.
             
             time.sleep(1)
             
@@ -262,17 +372,16 @@ def login_process(driver, user, password):
                 return True
             
             # --- CASE B: GẶP LỖI HILFE / ERROR -> CHUYỂN VỀ GMX.NET ---
-            # Logic mới: Gặp lỗi này không return False mà redirect về trang chủ
             if "hilfe.gmx.net" in current_url or "consent-management" in current_url:
                 print(f"⚠️ Redirected to Help/Error page. Force navigating to GMX Home...")
                 driver.get("https://www.gmx.net/")
-                time.sleep(2.5) # Chờ load trang chủ
-                continue # Quay lại đầu vòng lặp để xử lý logic trang chủ (CASE C)
+                time.sleep(2.5) 
+                continue 
 
             # --- CASE C: VỀ TRANG CHỦ GMX (Cần xử lý Popup & Click Postfach) ---
             if "gmx.net" in current_url and "auth" not in current_url and "hilfe" not in current_url:
                 time.sleep(2)
-                driver.get("https://www.gmx.net/") # Refresh để chắc chắn trang sạch
+                driver.get("https://www.gmx.net/") 
                 time.sleep(2)
                 
                 # B2: Trang sạch -> Tìm nút 'Zum Postfach'

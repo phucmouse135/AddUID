@@ -43,6 +43,9 @@ def get_driver(headless=False, proxy_port=None):
     options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
     options.add_experimental_option("useAutomationExtension", False)
 
+    # Enable Performance Logging (QUAN TRỌNG: Để bắt gói tin mạng tìm SiteKey)
+    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+
     if headless:
         options.add_argument('--headless=new') # New headless mode (harder to detect)
     
@@ -55,8 +58,8 @@ def get_driver(headless=False, proxy_port=None):
     options.add_argument("--window-size=1280,800")
     
     # Tắt load ảnh để chạy nhanh
-    prefs = {"profile.managed_default_content_settings.images": 2}
-    options.add_experimental_option("prefs", prefs)
+    # prefs = {"profile.managed_default_content_settings.images": 2}
+    # options.add_experimental_option("prefs", prefs)
     
     print(f"[CORE] Opening Browser (Headless: {headless}) using {CHROMEDRIVER_PATH}...")
     
@@ -74,9 +77,33 @@ def get_driver(headless=False, proxy_port=None):
         # Tiêm JS để xóa hoàn toàn dấu vết navigator.webdriver trước khi load bất kỳ trang nào
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": """
+                // 1. Spoof navigator.webdriver
                 Object.defineProperty(navigator, 'webdriver', {
                     get: () => undefined
                 });
+
+                // 2. Spoof navigator.languages
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en']
+                });
+
+                // 3. Spoof navigator.plugins
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+
+                // 4. Spoof window.chrome
+                window.chrome = {
+                    runtime: {}
+                };
+
+                // 5. Spoof permissions
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                    Promise.resolve({ state: 'granted', kind: 'permission' }) :
+                    originalQuery(parameters)
+                );
             """
         })
 
