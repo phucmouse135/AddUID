@@ -1,5 +1,9 @@
 # FILE: step1_login.py
 import time
+import json
+import urllib.request
+import urllib.parse
+import re
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -16,6 +20,7 @@ except ImportError:
     def reload_if_ad_popup(driver): return False
 
 # --- CONFIG ---
+CAPTCHA_API_KEY = "2651ba625c2b6da0697406bff9ffcab2"
 DEF_USER = "saucycut1@gmx.de"
 DEF_PASS = "muledok5P"
 AUTH_URL = "https://auth.gmx.net/login?prompt=none&state=eyJpZCI6ImVlOTk4N2NmLWE2ZjYtNGQzMy04NjA3LWEwZDFmMTFlMDU0NSIsImNsaWVudElkIjoiZ214bmV0X2FsbGlnYXRvcl9saXZlIiwieFVpQXBwIjoiZ214bmV0LmFsbGlnYXRvci8xLjEwLjEiLCJwYXlsb2FkIjoiZXlKa1l5STZJbUp6SWl3aWRHRnlaMlYwVlZKSklqb2lhSFIwY0hNNkx5OXNhVzVyTG1kdGVDNXVaWFF2YldGcGJDOXphRzkzVTNSaGNuUldhV1YzSWl3aWNISnZZMlZ6YzBsa0lqb2liMmxmY0d0alpWOWpNVGRtTjJNNE55SjkifQ%3D%3D&authcode-context=CcbxFUyzH0"
@@ -52,6 +57,100 @@ def safe_send_keys(driver, by, value, text, timeout=10):
             return True
         except:
             return False
+
+def solve_captchafox(driver):
+    print("--- DETECTED CAPTCHA INTERACTION ---")
+    try:
+        # 1. Click 'Ich bin ein Mensch' checkbox
+        # Try multiple selectors based on user snippet
+        btn_xpath = "//*[contains(text(), 'Ich bin ein Mensch')]" 
+        try:
+             element = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.XPATH, btn_xpath))
+             )
+             element.click()
+             print("-> Clicked 'Ich bin ein Mensch'.")
+             time.sleep(3) # Wait for widget to update
+        except:
+             print("-> Button not clickable or already clicked.")
+
+        # 2. Extract SiteKey
+        # Look for cf-turnstile or captchafox sitekey
+        source = driver.page_source
+        sitekey = None
+        
+        # Regex for data-sitekey (Standard)
+        m = re.search(r'data-sitekey=["\']([^"\']+)["\']', source)
+        if m: 
+            sitekey = m.group(1)
+        else:
+            # Try finding inside script config or iframe src
+            m2 = re.search(r'siteKey=["\']([^"\']+)["\']', source, re.IGNORECASE)
+            if m2: sitekey = m2.group(1)
+
+        if not sitekey:
+            print("❌ [FAIL] Could not find SiteKey (Turnstile/CaptchaFox).")
+            return False
+        
+        print(f"-> Found SiteKey: {sitekey}")
+
+        # 3. Send Task to 2Captcha
+        # Using TurnstileTaskProxyless as it works without proxy and matches the UI "Ich bin ein Mensch" (Cloudflare)
+        req_url = "https://api.2captcha.com/createTask"
+        payload = {
+            "clientKey": CAPTCHA_API_KEY,
+            "task": {
+                "type": "TurnstileTaskProxyless", 
+                "websiteURL": driver.current_url,
+                "websiteKey": sitekey
+            }
+        }
+        
+        req = urllib.request.Request(req_url, data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        
+        if data.get("errorId") != 0:
+            print(f"❌ [2Captcha] Create Task Error: {data.get('errorDescription')}")
+            return False
+            
+        task_id = data.get("taskId")
+        print(f"-> Task Created: {task_id}. Waiting for solution...")
+
+        # 4. Poll Result
+        for _ in range(25): # 125s max
+            time.sleep(5)
+            res_url = "https://api.2captcha.com/getTaskResult"
+            res_json = {"clientKey": CAPTCHA_API_KEY, "taskId": task_id}
+            
+            req2 = urllib.request.Request(res_url, data=json.dumps(res_json).encode('utf-8'), headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req2) as resp2:
+                res_data = json.loads(resp2.read().decode('utf-8'))
+            
+            if res_data.get("status") == "ready":
+                token = res_data.get("solution", {}).get("token")
+                print("-> Captcha SOLVED!")
+                
+                # 5. Inject Token
+                # Try Turnstile and Recaptcha standard fields
+                driver.execute_script(f"""
+                    let el1 = document.querySelector('[name="cf-turnstile-response"]');
+                    let el2 = document.querySelector('[name="g-recaptcha-response"]');
+                    if(el1) el1.value = "{token}";
+                    if(el2) el2.value = "{token}";
+                """)
+                return True
+            
+            if res_data.get("errorId") != 0:
+                print(f"❌ [2Captcha] Poll Error: {res_data.get('errorDescription')}")
+                return False
+                
+        print("❌ [2Captcha] Timeout.")
+        return False
+        
+    except Exception as e:
+        print(f"❌ [EXCEPTION] in solve_captchafox: {e}")
+        return False
 
 def check_blocking_popup(driver):
     """
@@ -95,6 +194,31 @@ def login_process(driver, user, password):
         if not safe_click(driver, By.CSS_SELECTOR, "button[data-testid='button-next']"):
             print("❌ [FAIL] Không nhấn được nút Weiter.")
             return False
+
+        # --- INTERMEDIATE CHECK: Captcha or Password ---
+        print("-> Checking: Password field OR CaptchaFox...")
+        check_start = time.time()
+        while time.time() - check_start < 15:
+            # Case A: Password Field Found
+            if len(driver.find_elements(By.ID, "password")) > 0 or len(driver.find_elements(By.CSS_SELECTOR, "input[data-testid='input-password']")) > 0:
+                print("-> Password field found.")
+                break
+            
+            # Case B: Captcha Found
+            captcha_elems = driver.find_elements(By.XPATH, "//*[contains(text(), 'Ich bin ein Mensch')]")
+            if len(captcha_elems) > 0 and captcha_elems[0].is_displayed():
+                print("⚠️ CaptchaFox/Turnstile detected. Initiating solver...")
+                if solve_captchafox(driver):
+                    print("-> Solved. Waiting for transition to password...")
+                    time.sleep(3)
+                    check_start = time.time() # Reset timer to wait for password
+                    continue
+                else:
+                    print("❌ Failed to solve captcha.")
+                    # Continue anyway to see if it acts weird or allow manual intervention? 
+                    # Usually better to break or return False, but loop continues to check Pass.
+            
+            time.sleep(1)
             
         # 4. NHẬP PASSWORD
         if not safe_send_keys(driver, By.ID, "password", password, timeout=5):
