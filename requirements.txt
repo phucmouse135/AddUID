@@ -1,5 +1,4 @@
 selenium
-undetected-chromedriver 
 webdriver-manager
 setuptools
 fake-useragent

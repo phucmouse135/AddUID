@@ -4,11 +4,10 @@ import threading
 import time
 import queue
 import traceback
-import undetected_chromedriver as uc
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Import functional modules (optimized in previous steps)
-from gmx_core import get_driver
+from gmx_core import get_driver, close_driver_and_cleanup
 from step1_login import login_process
 from test_step2_nav import step_2_navigate
 from test_step3_clean import step_3_cleanup
@@ -19,12 +18,6 @@ INPUT_FILE = "input.txt"
 OUTPUT_FILE = "output.txt"
 BACKUP_UI_FILE = "backup_uids.txt" # New config
 MAX_THREADS = 2  # Parallel threads (Increase if powerful machine, careful with IP)
-
-# Patch annoying WinError 6 from undetected_chromedriver
-def _del_patch(self):
-    try: self.quit() 
-    except: pass
-uc.Chrome.__del__ = _del_patch
 
 # Thread-safe Print lock
 print_lock = threading.Lock()
@@ -247,14 +240,13 @@ def process_single_account(task):
                 break # Login OK -> Break loop, keep driver for next steps
             else:
                 # Login Failed -> Quit driver immediately to prepare for next attempt
-                driver.quit()
+                close_driver_and_cleanup(driver)
                 driver = None
                 
         except Exception as e:
             log_safe(f"[{user}] Setup/Login Exception (Attempt {attempt}): {e}", "ERROR")
             if driver:
-                try: driver.quit()
-                except: pass
+                close_driver_and_cleanup(driver)
             driver = None
             
     if not login_success:
@@ -350,8 +342,7 @@ def process_single_account(task):
         
     finally:
         if driver:
-            try: driver.quit()
-            except: pass
+            close_driver_and_cleanup(driver)
             
 def main():
     log_safe(f"TOOL ADD ALIAS GMX - MULTI THREAD ({MAX_THREADS})")

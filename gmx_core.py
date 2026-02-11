@@ -33,19 +33,26 @@ def get_driver(headless=False, proxy_port=None):
         # Default fallback or no proxy
         pass 
     
-    # 3. Static User Agent (no network call)
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    # 3. Static User Agent (Updated for better stealth)
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
     print(f"[CORE] UserAgent: {user_agent}")
     options.add_argument(f'--user-agent={user_agent}')
 
     # 4. Chống detect cơ bản & Cấu hình
+    # Tắt dòng 'Chrome is being controlled by automated test software' and logging
+    options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+    options.add_experimental_option("useAutomationExtension", False)
+
     if headless:
-        options.add_argument('--headless')
+        options.add_argument('--headless=new') # New headless mode (harder to detect)
+    
     options.add_argument('--no-sandbox')
-    options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_argument('--disable-blink-features=AutomationControlled') # Important for Cloudflare
     options.add_argument("--disable-infobars")
     options.add_argument("--disable-popup-blocking")
-    options.add_experimental_option('excludeSwitches', ['enable-logging'])
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1280,800")
     
     # Tắt load ảnh để chạy nhanh
     prefs = {"profile.managed_default_content_settings.images": 2}
@@ -62,6 +69,17 @@ def get_driver(headless=False, proxy_port=None):
 
     try:
         driver = webdriver.Chrome(service=service, options=options)
+
+        # 5. CDP MAGIC (QUAN TRỌNG NHẤT CHO CAPTCHA)
+        # Tiêm JS để xóa hoàn toàn dấu vết navigator.webdriver trước khi load bất kỳ trang nào
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": """
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            """
+        })
+
     except Exception as e:
         print(f"[CORE-ERROR] Could not start driver: {e}")
         # Clean up temp dir if start fails
@@ -72,10 +90,6 @@ def get_driver(headless=False, proxy_port=None):
     
     # Lưu path temp dir vào object driver để dùng cho hàm cleanup sau này
     driver.my_temp_user_data_dir = user_data_dir
-    
-    # 5. Bypass detection script thêm sau khi init
-    # Overwrite property navigator.webdriver = undefined
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
     return driver
 

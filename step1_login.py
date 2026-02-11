@@ -64,8 +64,7 @@ def solve_captchafox(driver):
     print("--- DETECTED CAPTCHA INTERACTION ---")
     try:
         # 1. Click 'Ich bin ein Mensch' checkbox
-        # Try multiple selectors based on user snippet
-        btn_xpath = "//*[contains(text(), 'Ich bin ein Mensch')]" 
+        btn_xpath = "//*[contains(text(), 'Ich bin ein Mensch')]"
         try:
              element = WebDriverWait(driver, 5).until(
                 EC.element_to_be_clickable((By.XPATH, btn_xpath))
@@ -76,19 +75,22 @@ def solve_captchafox(driver):
         except:
              print("-> Button not clickable or already clicked.")
 
-        # 2. Extract SiteKey
-        # Look for cf-turnstile or captchafox sitekey
-        source = driver.page_source
+        # 2. Extract SiteKey (Retry Loop)
         sitekey = None
-        
-        # Regex for data-sitekey (Standard)
-        m = re.search(r'data-sitekey=["\']([^"\']+)["\']', source)
-        if m: 
-            sitekey = m.group(1)
-        else:
-            # Try finding inside script config or iframe src
-            m2 = re.search(r'siteKey=["\']([^"\']+)["\']', source, re.IGNORECASE)
-            if m2: sitekey = m2.group(1)
+        for i in range(5):
+            source = driver.page_source
+            # Regex for data-sitekey (Standard)
+            m = re.search(r'data-sitekey=["\']([^"\']+)["\']', source)
+            if m: 
+                sitekey = m.group(1)
+                break
+            else:
+                # Try finding inside script config or iframe src
+                m2 = re.search(r'siteKey=["\']([^"\']+)["\']', source, re.IGNORECASE)
+                if m2: 
+                    sitekey = m2.group(1)
+                    break
+            time.sleep(1)
 
         if not sitekey:
             print("❌ [FAIL] Could not find SiteKey (Turnstile/CaptchaFox).")
@@ -210,13 +212,24 @@ def login_process(driver, user, password):
             captcha_elems = driver.find_elements(By.XPATH, "//*[contains(text(), 'Ich bin ein Mensch')]")
             if len(captcha_elems) > 0 and captcha_elems[0].is_displayed():
                 print("⚠️ CaptchaFox/Turnstile detected. Initiating solver...")
-                if solve_captchafox(driver):
+                
+                # Retry solving up to 3 times
+                solved = False
+                for solve_attempt in range(3):
+                    if solve_captchafox(driver):
+                        solved = True
+                        break
+                    else:
+                        print(f"⚠️ Captcha solve failed (Attempt {solve_attempt+1}/3). Retrying...")
+                        time.sleep(2)
+                        
+                if solved:
                     print("-> Solved. Waiting for transition to password...")
                     time.sleep(3)
                     check_start = time.time() # Reset timer to wait for password
                     continue
                 else:
-                    print("❌ Failed to solve captcha.")
+                    print("❌ Failed to solve captcha after 3 attempts.")
                     # Continue anyway to see if it acts weird or allow manual intervention? 
                     # Usually better to break or return False, but loop continues to check Pass.
             
